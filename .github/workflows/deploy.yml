@@ -1,0 +1,242 @@
+name: Deploy
+
+# Автотриггер снят 28.08.2026: GitHub Actions не используются, выкат идёт
+# вручную через скрипт выката через Coolify API. Вернуть
+# push в dev вместе с self-hosted раннером.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Environment to deploy from the selected ref. Prod is allowed only from a tag.
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+
+permissions:
+  contents: read
+
+# Dev и prod живут в одном workflow, поэтому группа разведена по target: иначе
+# push в dev отменил бы идущий прод-раскат между сменой APP_IMAGE и деплоем.
+concurrency:
+  group: transcrib-${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'prod') && 'prod' || format('dev-{0}', github.ref) }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.target == 'prod') }}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/daniil4545/transcrib
+  COOLIFY_API_BASE: https://coolify.example.com/api/v1
+  COOLIFY_SERVICE_UUID_DEV: <dev-resource-uuid>
+
+jobs:
+  checks:
+    name: Go checks
+    # Общая джоба dev- и prod-пути: на self-hosted уходит только dev, прод
+    # остаётся на GitHub-hosted вместе с остальными prod-джобами.
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'prod') && 'ubuntu-latest' || (vars.CI_RUNNER || 'ubuntu-latest') }}
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: transcrib
+          POSTGRES_USER: transcrib
+          POSTGRES_PASSWORD: transcrib
+        # Случайный порт хоста: на self-hosted два раннера иначе дерутся за 5432.
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U transcrib -d transcrib"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+          --cpus 1
+          --memory 512m
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      # actions/checkout v5.0.0
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      # actions/setup-go v6.0.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+
+      # Контекст job недоступен в jobs.<id>.env, поэтому порт разрешается здесь.
+      - name: Export DATABASE_URL
+        run: echo "DATABASE_URL=postgres://transcrib:transcrib@localhost:${{ job.services.postgres.ports[5432] }}/transcrib?sslmode=disable" >> "$GITHUB_ENV"
+
+      - name: Check
+        run: make ci-check
+
+  build-dev:
+    name: Build and push dev image
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    needs: checks
+    if: github.ref == 'refs/heads/dev' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target == 'dev'))
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # actions/checkout v5.0.0
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      # docker/login-action v3.6.0
+      - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # docker/build-push-action v6.18.0
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        with:
+          context: src
+          file: src/Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            VCS_REF=${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:dev
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  deploy-dev:
+    name: Deploy dev
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    needs: build-dev
+    concurrency:
+      group: coolify-dev
+      cancel-in-progress: false
+    steps:
+      # actions/checkout v5.0.0
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      - name: Trigger Coolify dev deploy
+        env:
+          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK_DEV }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$COOLIFY_WEBHOOK" || -z "$COOLIFY_TOKEN" ]]; then
+            echo "Coolify dev secrets are not configured."
+            exit 1
+          fi
+          compose_payload="${RUNNER_TEMP}/coolify-compose.json"
+          jq -Rs '{docker_compose_raw: @base64, instant_deploy: false}' \
+            src/docker-compose.coolify.yml > "$compose_payload"
+          curl --fail-with-body --silent --show-error --request PATCH \
+            "${COOLIFY_API_BASE}/services/${COOLIFY_SERVICE_UUID_DEV}" \
+            --header "Authorization: Bearer $COOLIFY_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data-binary "@$compose_payload" \
+            --output /dev/null
+          image="${IMAGE_NAME}:sha-${GITHUB_SHA}"
+          curl --fail --silent --show-error --request PATCH \
+            "${COOLIFY_API_BASE}/services/${COOLIFY_SERVICE_UUID_DEV}/envs" \
+            --header "Authorization: Bearer $COOLIFY_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "{\"key\":\"APP_IMAGE\",\"value\":\"${image}\"}" \
+            --output /dev/null
+          # POST, а не GET: с Coolify 4.2.0 изменяющие ручки отвечают на GET 405.
+          curl --fail --silent --show-error --request POST "$COOLIFY_WEBHOOK" \
+            --header "Authorization: Bearer $COOLIFY_TOKEN"
+
+  approve-prod:
+    name: Approve prod deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: checks
+    if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'workflow_dispatch' && inputs.target == 'prod'
+    environment: production
+    steps:
+      - name: Approved
+        run: echo "manual production deploy requested for tag ${GITHUB_REF_NAME} sha ${GITHUB_SHA}"
+
+  build-prod:
+    name: Build and push prod image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: approve-prod
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # actions/checkout v5.0.0
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      # docker/login-action v3.6.0
+      - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # docker/build-push-action v6.18.0
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        with:
+          context: src
+          file: src/Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            VCS_REF=${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:prod
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  deploy-prod:
+    name: Deploy prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build-prod
+    environment: production
+    concurrency:
+      group: coolify-prod
+      cancel-in-progress: false
+    steps:
+      # actions/checkout v5.0.0
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      - name: Trigger Coolify prod deploy
+        env:
+          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK_PROD }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_SERVICE_UUID: ${{ secrets.COOLIFY_SERVICE_UUID_PROD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$COOLIFY_WEBHOOK" || -z "$COOLIFY_TOKEN" || -z "$COOLIFY_SERVICE_UUID" ]]; then
+            echo "Coolify prod secrets are not configured."
+            exit 1
+          fi
+          compose_payload="${RUNNER_TEMP}/coolify-compose.json"
+          jq -Rs '{docker_compose_raw: @base64, instant_deploy: false}' \
+            src/docker-compose.coolify.yml > "$compose_payload"
+          curl --fail-with-body --silent --show-error --request PATCH \
+            "${COOLIFY_API_BASE}/services/${COOLIFY_SERVICE_UUID}" \
+            --header "Authorization: Bearer $COOLIFY_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data-binary "@$compose_payload" \
+            --output /dev/null
+          image="${IMAGE_NAME}:sha-${GITHUB_SHA}"
+          curl --fail --silent --show-error --request PATCH \
+            "${COOLIFY_API_BASE}/services/${COOLIFY_SERVICE_UUID}/envs" \
+            --header "Authorization: Bearer $COOLIFY_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "{\"key\":\"APP_IMAGE\",\"value\":\"${image}\"}" \
+            --output /dev/null
+          # POST, а не GET: с Coolify 4.2.0 изменяющие ручки отвечают на GET 405.
+          curl --fail --silent --show-error --request POST "$COOLIFY_WEBHOOK" \
+            --header "Authorization: Bearer $COOLIFY_TOKEN"

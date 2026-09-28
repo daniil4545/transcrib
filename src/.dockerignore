@@ -1,0 +1,12 @@
+# migrations/ намеренно НЕ исключены — нужны в образе для goose
+.git
+.env
+.env.*
+!.env.example
+**/*_test.go
+testdata/
+Dockerfile
+.dockerignore
+docker-compose*.yml
+Makefile
+*.md

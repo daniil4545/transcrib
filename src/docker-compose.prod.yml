@@ -1,0 +1,65 @@
+# Прод-стек transcrib (изолированный compose-проект на общем сервере).
+# Деплой: Coolify CD (deploy/coolify-cd.md); IMAGE_TAG задаётся выкаткой.
+# Секреты — в соседнем .env (chmod 600, вне git). dev-compose (docker-compose.yml) не трогаем.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: transcrib
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: transcrib
+    volumes:
+      - transcrib_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transcrib -d transcrib"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging:                       # архив логов хранит host journald; retention задаётся на VPS
+      driver: journald
+      options:
+        tag: "transcrib-{{.Name}}"
+    # порт наружу НЕ публикуем: app ходит в БД по имени postgres внутри сети
+
+  # one-shot: накатывает миграции goose и выходит 0. Тот же образ, что app.
+  # build здесь же (а не только у app): образ transcrib:${IMAGE_TAG} гарантированно
+  # существует к старту migrate, без завязки на порядок сборки сервисов.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: transcrib:${IMAGE_TAG:?IMAGE_TAG must be set by deploy hook}
+    command: ["/goose", "-dir", "/migrations", "postgres", "${DATABASE_URL:?DATABASE_URL must be set in .env}", "up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: transcrib:${IMAGE_TAG:?IMAGE_TAG must be set by deploy hook}
+    env_file: .env
+    # RU-сервер: IPv4-маршрут к дефолтному IP api.telegram.org (149.154.166.110) заблокирован,
+    # хост ходит в Telegram по IPv6, но Docker-контейнеры IPv4-only -> бот не достучится.
+    # Пин на достижимый Telegram-DC 149.154.167.220 (проверено: Bot API отвечает).
+    extra_hosts:
+      - "api.telegram.org:149.154.167.220"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # unless-stopped переживает ребут бокса. На авторестарте демон НЕ перепроверяет
+    # depends_on (это только для compose up) — но схема уже накатана прошлым деплоем,
+    # поэтому app стартует корректно без повторного прогона migrate.
+    restart: unless-stopped
+    logging:                       # архив логов хранит host journald; Dozzle остаётся best-effort live-viewer
+      driver: journald
+      options:
+        tag: "transcrib-{{.Name}}"
+    # входящих портов нет: Telegram long polling (исходящее) + фоновые горутины
+
+volumes:
+  transcrib_pgdata:

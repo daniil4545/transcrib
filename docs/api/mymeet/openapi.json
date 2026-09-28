@@ -1,0 +1,1161 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "mymeet.ai - OpenAPI 3.0",
+    "description": "See usage on [GitHub](https://github.com/MyMeetAI/API-Docs).\n\n# Authentication\n\nAuthenticate every request with your personal API key. Contact the\n[sales team](https://mymeet.ai/contact) to get one.\n\n## Recommended: `X-API-KEY` header\n\nSend the key in the `X-API-KEY` HTTP header. This is the preferred method and\nworks on every endpoint:\n\n```\nX-API-KEY: YOUR_API_KEY\n```\n\n## Deprecated: `api_key` in the request body\n\nPassing the key as an `api_key` field in the request body (used by\n`POST /api/record-meeting` and `POST /api/video`) is **deprecated**. It still\nworks for backward compatibility, but will be removed in a future version —\nplease migrate to the `X-API-KEY` header.\n",
+    "termsOfService": "https://docs.google.com/document/d/1drhWmEGdfIzwBiW_MPE2IAq6H0Nauo_51AMVb5vc89Q/edit",
+    "contact": {
+      "email": "hello@mymeet.ai"
+    },
+    "version": "1.1.0"
+  },
+  "servers": [
+    {
+      "url": "https://backend.mymeet.ai/"
+    }
+  ],
+  "security": [
+    {
+      "ApiKeyHeader": []
+    }
+  ],
+  "paths": {
+    "/api/record-meeting": {
+      "post": {
+        "tags": [
+          "Record meeting"
+        ],
+        "summary": "Add bot for meeting",
+        "description": "Record online meeting Google meet, Zoom, Yandex Telemost, SberJazz, TrueConf, Konturtalk, MSteams, Jitsi",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (requests)",
+            "source": "import requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nheaders = {'X-API-KEY': API_KEY}\npayload = {\n    'link': 'https://meet.google.com/zyj-qrmk-gvo',\n    'meeting_password': '', # Meeting password (optional)\n    # UTC DateTime of meeting in cron format. To record NOW meeting leave it empty\n    'cron': '30 12 25 4 *',\n    'local_date_time': '2026-04-25T15:30:00+03:00',  # Local DateTime of meeting\n    'title': 'Daily sync',\n    'source': 'gmeet'\n}\n\nresponse = requests.post(\"https://backend.mymeet.ai/api/record-meeting\", json=payload, headers=headers)\nprint(response.json())\n"
+          },
+          {
+            "lang": "cURL",
+            "label": "cURL",
+            "source": "curl -X POST \"https://backend.mymeet.ai/api/record-meeting\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -d '{\n    \"link\": \"https://meet.google.com/zyj-qrmk-gvo\",\n    \"meeting_password\": \"\",\n    \"cron\": \"30 12 25 4 *\",\n    \"local_date_time\": \"2026-04-25T15:30:00+03:00\",\n    \"title\": \"Daily sync\",\n    \"source\": \"gmeet\"\n  }'\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Fetch)",
+            "source": "const payload = {\n  link: 'https://meet.google.com/zyj-qrmk-gvo',\n  meeting_password: '',\n  cron: '30 12 25 4 *',\n  local_date_time: '2026-04-25T15:30:00+03:00',\n  title: 'Daily sync',\n  source: 'gmeet'\n};\n\nfetch('https://backend.mymeet.ai/api/record-meeting', {\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json',\n    'X-API-KEY': 'YOUR_API_KEY'\n  },\n  body: JSON.stringify(payload)\n})\n.then(response => response.json())\n.then(data => console.log(data))\n.catch(error => console.error('Error:', error));\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp)",
+            "source": "import okhttp3.*;\nimport java.io.IOException;\n\npublic class Main {\n  public static void main(String[] args) throws IOException {\n    OkHttpClient client = new OkHttpClient();\n\n    MediaType mediaType = MediaType.parse(\"application/json\");\n    RequestBody body = RequestBody.create(mediaType,\n      \"{\\\"link\\\":\\\"https://meet.google.com/zyj-qrmk-gvo\\\",\\\"meeting_password\\\":\\\"\\\",\\\"cron\\\":\\\"30 12 25 4 *\\\",\\\"local_date_time\\\":\\\"2026-04-25T15:30:00+03:00\\\",\\\"title\\\":\\\"Daily sync\\\",\\\"source\\\":\\\"gmeet\\\"}\");\n\n    Request request = new Request.Builder()\n      .url(\"https://backend.mymeet.ai/api/record-meeting\")\n      .post(body)\n      .addHeader(\"Content-Type\", \"application/json\")\n      .addHeader(\"X-API-KEY\", \"YOUR_API_KEY\")\n      .build();\n\n    try (Response response = client.newCall(request).execute()) {\n      System.out.println(response.body().string());\n    }\n  }\n}\n"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Recording"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "402": {
+            "description": "Your limit is over"
+          },
+          "409": {
+            "description": "Meeting already scheduled"
+          }
+        }
+      }
+    },
+    "/api/video": {
+      "post": {
+        "tags": [
+          "Upload file"
+        ],
+        "summary": "Upload file",
+        "description": "Upload audio or video file by chunks and process it. See sample code [here](https://github.com/MyMeetAI/API-Docs/tree/main?tab=readme-ov-file#upload-file).",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (Chunks Upload)",
+            "source": "import uuid\nimport os\nimport math\nimport requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nheaders = {'X-API-KEY': API_KEY}\nfile_path = \"PATH_TO_FILE\"\n\nfile_id = str(uuid.uuid4())\nfile_size = os.path.getsize(file_path)\nrecommended_chunk_size = 20 * 1024 * 1024  # 20 MB recommended chunk size\n# ensure at least 2 chunks for small files to avoid single-chunk upload issues\nchunk_size = min(recommended_chunk_size, max(file_size // 2, 1024 * 1024))\ntotal_chunks = math.ceil(file_size / chunk_size)\n\nwith open(file_path, 'rb') as f:\n    for chunk_idx in range(total_chunks):\n        chunk = f.read(chunk_size)\n        chunk_number = chunk_idx + 1  # Standard 1-based indexing\n\n        data = {\n            'id': file_id,\n            'chunk_number': chunk_number,\n            'chunk_total': total_chunks,\n            'filename': os.path.basename(file_path),\n            'localTime': '2026-04-25T15:30:00+03:00',\n            'template_name': 'default', # Required by schema\n            'title': 'Meeting Upload'   # Optional\n        }\n\n        files = {'file': (os.path.basename(file_path), chunk, 'application/octet-stream')}\n\n        response = requests.post(\"https://backend.mymeet.ai/api/video\", data=data, files=files, headers=headers)\n\n        if response.status_code == 200:\n            print(f\"Chunk {chunk_number}/{total_chunks} uploaded successfully.\")\n            print(response.json())\n        else:\n            print(f\"Error: {response.status_code}, {response.text}\")\n            break\n"
+          },
+          {
+            "lang": "curl",
+            "label": "curl (Single Chunk Upload)",
+            "source": "# Note: For small files (< 20 MB), use at least 2 chunks to avoid upload issues\n# This example shows single chunk upload for demonstration only\n# For production, split file into chunks (recommended: 20 MB per chunk, min 2 chunks)\n\ncurl -X POST https://backend.mymeet.ai/api/video \\\n  -H \"Content-Type: multipart/form-data\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -F \"id=550e8400-e29b-41d4-a716-446655440000\" \\\n  -F \"chunk_number=1\" \\\n  -F \"chunk_total=1\" \\\n  -F \"filename=meeting.mp4\" \\\n  -F \"localTime=2026-04-25T15:30:00+03:00\" \\\n  -F \"template_name=default\" \\\n  -F \"title=Meeting Upload\" \\\n  -F \"file=@meeting.mp4;type=video/mp4\"\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Chunks Upload)",
+            "source": "const fs = require('fs');\nconst path = require('path');\nconst axios = require('axios'); // Рекомендуется axios для FormData в Node.js\nconst { v4: uuidv4 } = require('uuid');\n\nasync function uploadFile(filePath) {\n  const API_KEY = 'YOUR_API_KEY';\n  const fileId = uuidv4();\n  const stats = fs.statSync(filePath);\n  const fileSize = stats.size;\n  const recommendedChunkSize = 20 * 1024 * 1024; // 20 MB recommended chunk size\n  // ensure at least 2 chunks for small files to avoid single-chunk upload issues\n  const chunkSize = Math.min(recommendedChunkSize, Math.max(Math.floor(fileSize / 2), 1024 * 1024));\n  const totalChunks = Math.ceil(fileSize / chunkSize);\n  const fileName = path.basename(filePath);\n\n  for (let i = 0; i < totalChunks; i++) {\n    const start = i * chunkSize;\n    const end = Math.min(start + chunkSize, fileSize);\n    const chunk = fs.createReadStream(filePath, { start, end: end - 1 });\n    const chunkNumber = i + 1;\n\n    const formData = new FormData();\n    formData.append('id', fileId);\n    formData.append('chunk_number', chunkNumber.toString());\n    formData.append('chunk_total', totalChunks.toString());\n    formData.append('filename', fileName);\n    formData.append('localTime', '2026-04-25T15:30:00+03:00');\n    formData.append('template_name', 'default');\n    formData.append('title', 'Meeting Upload');\n    formData.append('file', chunk, fileName);\n\n    try {\n      const response = await axios.post('https://backend.mymeet.ai/api/video', formData, {\n        headers: { 'Content-Type': 'multipart/form-data', 'X-API-KEY': API_KEY }\n      });\n      console.log(`Chunk ${chunkNumber}/${totalChunks} uploaded.`);\n    } catch (error) {\n      console.error(`Error uploading chunk ${chunkNumber}:`, error.response?.data || error.message);\n      break;\n    }\n  }\n}\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp Chunks)",
+            "source": "import okhttp3.*;\nimport java.io.*;\nimport java.util.UUID;\n\npublic class ChunkUploader {\n    public static void main(String[] args) throws IOException {\n        OkHttpClient client = new OkHttpClient();\n        File file = new File(\"PATH_TO_FILE\");\n        String apiKey = \"YOUR_API_KEY\";\n        String fileId = UUID.randomUUID().toString();\n\n        long fileSize = file.length();\n        long recommendedChunkSize = 20 * 1024 * 1024; // 20 MB recommended chunk size\n        // ensure at least 2 chunks for small files to avoid single-chunk upload issues\n        long chunkSize = Math.min(recommendedChunkSize, Math.max(fileSize / 2, 1024 * 1024));\n        int totalChunks = (int) Math.ceil((double) fileSize / chunkSize);\n\n        try (RandomAccessFile raf = new RandomAccessFile(file, \"r\")) {\n            for (int i = 0; i < totalChunks; i++) {\n                int chunkNumber = i + 1;\n                byte[] buffer = new byte[(int) Math.min(chunkSize, fileSize - (long) i * chunkSize)];\n                raf.readFully(buffer);\n\n                RequestBody fileBody = RequestBody.create(buffer, MediaType.parse(\"application/octet-stream\"));\n\n                MultipartBody requestBody = new MultipartBody.Builder()\n                        .setType(MultipartBody.FORM)\n                        .addFormDataPart(\"id\", fileId)\n                        .addFormDataPart(\"chunk_number\", String.valueOf(chunkNumber))\n                        .addFormDataPart(\"chunk_total\", String.valueOf(totalChunks))\n                        .addFormDataPart(\"filename\", file.getName())\n                        .addFormDataPart(\"localTime\", \"2026-04-25T15:30:00+03:00\")\n                        .addFormDataPart(\"template_name\", \"default\")\n                        .addFormDataPart(\"title\", \"Meeting Upload\")\n                        .addFormDataPart(\"file\", file.getName(), fileBody)\n                        .build();\n\n                Request request = new Request.Builder()\n                        .url(\"https://backend.mymeet.ai/api/video\")\n                        .post(requestBody)\n                        .addHeader(\"X-API-KEY\", apiKey)\n                        .build();\n\n                try (Response response = client.newCall(request).execute()) {\n                    if (response.isSuccessful()) {\n                        System.out.println(\"Chunk \" + chunkNumber + \"/\" + totalChunks + \" uploaded.\");\n                    } else {\n                        System.err.println(\"Upload failed: \" + response.body().string());\n                        break;\n                    }\n                }\n            }\n        }\n    }\n}\n"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Uploading"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Loaded chunk chunk_number / chunk_total. If last chunk, this returns meeting_id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "meeting_id": {
+                      "type": "string",
+                      "description": "ID of the meeting"
+                    },
+                    "user_id": {
+                      "type": "string",
+                      "description": "ID of the user who uploaded the file"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "402": {
+            "description": "Your minutes are over"
+          },
+          "409": {
+            "description": "File is already uploaded"
+          },
+          "414": {
+            "description": "File size exceeds 3 GB"
+          },
+          "415": {
+            "description": "Unsupported file type"
+          },
+          "426": {
+            "description": "Not enough minutes to process file"
+          },
+          "432": {
+            "description": "Upgrade to Pro or Ultra to upload files over 1 GB"
+          },
+          "433": {
+            "description": "Duration lower 30 sec"
+          }
+        }
+      }
+    },
+    "/api/workspaces/active/all-meetings": {
+      "get": {
+        "tags": [
+          "Get active workspace meetings"
+        ],
+        "summary": "Get all active meetings in workspace",
+        "description": "Returns a paginated list of active meetings for the authenticated workspace.\n",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (Requests)",
+            "source": "import requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nheaders = {'X-API-KEY': API_KEY}\n\nparams = {\n    'page': 0,      # Page index (starts from 0)\n    'perPage': 10   # Number of meetings per page\n}\n\nresponse = requests.get(\n    \"https://backend.mymeet.ai/api/workspaces/active/all-meetings\",\n    params=params,\n    headers=headers\n)\n\nif response.status_code == 200:\n    print(response.json())\nelse:\n    print(f\"Error {response.status_code}: {response.text}\")\n"
+          },
+          {
+            "lang": "cURL",
+            "label": "cURL",
+            "source": "curl -G \"https://backend.mymeet.ai/api/workspaces/active/all-meetings\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -d \"page=0\" \\\n  -d \"perPage=10\"\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Fetch)",
+            "source": "const params = new URLSearchParams({\n  page: '0',\n  perPage: '10'\n});\n\nfetch(`https://backend.mymeet.ai/api/workspaces/active/all-meetings?${params}`, {\n  headers: { 'X-API-KEY': 'YOUR_API_KEY' }\n})\n  .then(response => response.json())\n  .then(data => console.log(data))\n  .catch(error => console.error('Error:', error));\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp)",
+            "source": "import okhttp3.*;\nimport java.io.IOException;\n\npublic class Main {\n  public static void main(String[] args) throws IOException {\n    OkHttpClient client = new OkHttpClient();\n\n    HttpUrl url = HttpUrl.parse(\"https://backend.mymeet.ai/api/workspaces/active/all-meetings\").newBuilder()\n        .addQueryParameter(\"page\", \"0\")\n        .addQueryParameter(\"perPage\", \"10\")\n        .build();\n\n    Request request = new Request.Builder()\n        .url(url)\n        .addHeader(\"X-API-KEY\", \"YOUR_API_KEY\")\n        .get()\n        .build();\n\n    try (Response response = client.newCall(request).execute()) {\n      if (response.isSuccessful()) {\n        System.out.println(response.body().string());\n      }\n    }\n  }\n}\n"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "description": "API key as a query parameter. Optional alternative to the recommended\n`X-API-KEY` header.\n",
+            "required": false,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Page index (starts from 0)",
+            "required": true,
+            "explode": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0
+            }
+          },
+          {
+            "name": "perPage",
+            "in": "query",
+            "description": "Number of meetings per page",
+            "required": true,
+            "explode": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of active meetings"
+          },
+          "400": {
+            "description": "Invalid request parameters"
+          },
+          "401": {
+            "description": "Unauthorized (invalid or missing API key)"
+          }
+        }
+      }
+    },
+    "/api/meeting/status": {
+      "get": {
+        "tags": [
+          "Get processed meeting"
+        ],
+        "summary": "Get meeting status",
+        "description": "See sample code [here](https://github.com/MyMeetAI/API-Docs/tree/main?tab=readme-ov-file#get-meeting-status).",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (Requests)",
+            "source": "import requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nMEETING_ID = \"YOUR_MEETING_ID\"\nheaders = {'X-API-KEY': API_KEY}\n\nparams = {\n    'meeting_id': MEETING_ID\n}\n\nresponse = requests.get(\n    \"https://backend.mymeet.ai/api/meeting/status\",\n    params=params,\n    headers=headers\n)\n\nif response.status_code == 200:\n    # Returns status: processing, processed, failed, queued, or new\n    print(f\"Status: {response.text}\")\nelse:\n    print(f\"Error {response.status_code}: {response.text}\")\n"
+          },
+          {
+            "lang": "cURL",
+            "label": "cURL",
+            "source": "curl -G \"https://backend.mymeet.ai/api/meeting/status\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -d \"meeting_id=YOUR_MEETING_ID\"\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Fetch)",
+            "source": "const params = new URLSearchParams({\n  meeting_id: 'YOUR_MEETING_ID'\n});\n\nfetch(`https://backend.mymeet.ai/api/meeting/status?${params}`, {\n  headers: { 'X-API-KEY': 'YOUR_API_KEY' }\n})\n  .then(response => response.text())\n  .then(status => console.log('Status:', status))\n  .catch(error => console.error('Error:', error));\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp)",
+            "source": "import okhttp3.*;\nimport java.io.IOException;\n\npublic class Main {\n  public static void main(String[] args) throws IOException {\n    OkHttpClient client = new OkHttpClient();\n\n    HttpUrl url = HttpUrl.parse(\"https://backend.mymeet.ai/api/meeting/status\").newBuilder()\n        .addQueryParameter(\"meeting_id\", \"YOUR_MEETING_ID\")\n        .build();\n\n    Request request = new Request.Builder()\n        .url(url)\n        .addHeader(\"X-API-KEY\", \"YOUR_API_KEY\")\n        .get()\n        .build();\n\n    try (Response response = client.newCall(request).execute()) {\n      if (response.isSuccessful()) {\n        System.out.println(\"Status: \" + response.body().string());\n      }\n    }\n  }\n}\n"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "description": "API key as a query parameter. Optional alternative to the recommended\n`X-API-KEY` header.\n",
+            "required": false,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          },
+          {
+            "name": "meeting_id",
+            "in": "query",
+            "description": "Meeting ID",
+            "required": true,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meeting status (processing, processed, failed, queued, new)"
+          },
+          "400": {
+            "description": "Invalid meeting_id"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/video/report": {
+      "get": {
+        "tags": [
+          "Get processed meeting"
+        ],
+        "summary": "Get meeting JSON",
+        "description": "See sample code [here](https://github.com/MyMeetAI/API-Docs/tree/main?tab=readme-ov-file#get-meeting-json).",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (Get Report)",
+            "source": "import requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nMEETING_ID = \"YOUR_MEETING_ID\"\nheaders = {'X-API-KEY': API_KEY}\n\nparams = {\n    'meeting_id': MEETING_ID\n}\n\nresponse = requests.get(\n    \"https://backend.mymeet.ai/api/video/report\",\n    params=params,\n    headers=headers\n)\n\nif response.status_code == 200:\n    data = response.json()\n    print(data)\nelse:\n    print(f\"Error {response.status_code}: {response.text}\")\n"
+          },
+          {
+            "lang": "cURL",
+            "label": "cURL",
+            "source": "curl -G \"https://backend.mymeet.ai/api/video/report\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -d \"meeting_id=YOUR_MEETING_ID\"\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Fetch)",
+            "source": "const params = new URLSearchParams({\n  meeting_id: 'YOUR_MEETING_ID'\n});\n\nfetch(`https://backend.mymeet.ai/api/video/report?${params}`, {\n  headers: { 'X-API-KEY': 'YOUR_API_KEY' }\n})\n  .then(response => {\n    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);\n    return response.json();\n  })\n  .then(data => console.log(data))\n  .catch(error => console.error('Error:', error));\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp)",
+            "source": "import okhttp3.*;\nimport java.io.IOException;\n\npublic class Main {\n  public static void main(String[] args) throws IOException {\n    OkHttpClient client = new OkHttpClient();\n\n    HttpUrl url = HttpUrl.parse(\"https://backend.mymeet.ai/api/video/report\").newBuilder()\n        .addQueryParameter(\"meeting_id\", \"YOUR_MEETING_ID\")\n        .build();\n\n    Request request = new Request.Builder().url(url).addHeader(\"X-API-KEY\", \"YOUR_API_KEY\").get().build();\n\n    try (Response response = client.newCall(request).execute()) {\n      if (response.isSuccessful()) {\n        System.out.println(response.body().string());\n      } else {\n        System.err.println(\"Request failed: \" + response.code());\n      }\n    }\n  }\n}\n"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "description": "API key as a query parameter. Optional alternative to the recommended\n`X-API-KEY` header.\n",
+            "required": false,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          },
+          {
+            "name": "meeting_id",
+            "in": "query",
+            "description": "Meeting ID",
+            "required": true,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meeting JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid meeting_id"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "meeting is unavailable due to permissions"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "delete processed meeting"
+        ],
+        "summary": "delete meeting",
+        "description": "See sample code [here](https://github.com/MyMeetAI/API-Docs/tree/main?tab=readme-ov-file#get-meeting-json).",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (Delete Meeting)",
+            "source": "import requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nMEETING_ID = \"YOUR_MEETING_ID\"\nheaders = {'X-API-KEY': API_KEY}\n\nparams = {\n    'meeting_id': MEETING_ID\n}\n\nresponse = requests.delete(\n    \"https://backend.mymeet.ai/api/video/report\",\n    params=params,\n    headers=headers\n)\n\nif response.status_code == 200:\n    print(\"Meeting deleted successfully\")\nelse:\n    print(f\"Error {response.status_code}: {response.text}\")\n"
+          },
+          {
+            "lang": "cURL",
+            "label": "cURL",
+            "source": "curl -X DELETE -G \"https://backend.mymeet.ai/api/video/report\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -d \"meeting_id=YOUR_MEETING_ID\"\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Fetch)",
+            "source": "const params = new URLSearchParams({\n  meeting_id: 'YOUR_MEETING_ID'\n});\n\nfetch(`https://backend.mymeet.ai/api/video/report?${params}`, {\n  method: 'DELETE',\n  headers: { 'X-API-KEY': 'YOUR_API_KEY' }\n})\n.then(response => {\n  if (response.ok) console.log(\"Meeting deleted successfully\");\n  else console.error(\"Deletion failed:\", response.status);\n})\n.catch(error => console.error('Error:', error));\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp)",
+            "source": "import okhttp3.*;\nimport java.io.IOException;\n\npublic class Main {\n  public static void main(String[] args) throws IOException {\n    OkHttpClient client = new OkHttpClient();\n\n    HttpUrl url = HttpUrl.parse(\"https://backend.mymeet.ai/api/video/report\").newBuilder()\n        .addQueryParameter(\"meeting_id\", \"YOUR_MEETING_ID\")\n        .build();\n\n    Request request = new Request.Builder()\n        .url(url)\n        .addHeader(\"X-API-KEY\", \"YOUR_API_KEY\")\n        .delete()\n        .build();\n\n    try (Response response = client.newCall(request).execute()) {\n      if (response.isSuccessful()) {\n        System.out.println(\"Meeting deleted successfully\");\n      }\n    }\n  }\n}\n"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "description": "API key as a query parameter. Optional alternative to the recommended\n`X-API-KEY` header.\n",
+            "required": false,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          },
+          {
+            "name": "meeting_id",
+            "in": "query",
+            "description": "Meeting ID",
+            "required": true,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "meeting deleted successfully"
+          },
+          "400": {
+            "description": "Invalid meeting_id"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "meeting is unavailable due to permissions"
+          }
+        }
+      }
+    },
+    "/api/storage/download": {
+      "get": {
+        "tags": [
+          "Get processed meeting"
+        ],
+        "summary": "Download meeting",
+        "description": "Download the followup in PDF, Docx, JSON or Markdown format. See sample code [here](https://github.com/MyMeetAI/API-Docs/tree/main?tab=readme-ov-file#download-followup).",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (Download File)",
+            "source": "import requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nMEETING_ID = \"YOUR_MEETING_ID\"\nfile_format = 'pdf'  # Available values: pdf, md, json, docx\nheaders = {'X-API-KEY': API_KEY}\n\nparams = {\n    'meeting_id': MEETING_ID,\n    'format': file_format,\n    'timezone': 'UTC',      # Optional\n    #'template_name': 'default' # Optional\n}\n\nresponse = requests.get(\n    \"https://backend.mymeet.ai/api/storage/download\",\n    params=params,\n    headers=headers,\n    stream=True\n)\n\nif response.status_code == 200:\n    # Save binary content to file\n    filename = f\"meeting_report.{file_format}\"\n    with open(filename, 'wb') as f:\n        for chunk in response.iter_content(chunk_size=8192):\n            f.write(chunk)\n    print(f\"File saved as {filename}\")\nelse:\n    print(f\"Error {response.status_code}: {response.text}\")\n"
+          },
+          {
+            "lang": "cURL",
+            "label": "cURL",
+            "source": "curl -G \"https://backend.mymeet.ai/api/storage/download\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -d \"meeting_id=YOUR_MEETING_ID\" \\\n  -d \"format=pdf\" \\\n  -d \"timezone=UTC\" \\\n  --output meeting_report.pdf\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Fetch & Download)",
+            "source": "const params = new URLSearchParams({\n  meeting_id: 'YOUR_MEETING_ID',\n  format: 'pdf',\n  timezone: 'UTC'\n});\n\nfetch(`https://backend.mymeet.ai/api/storage/download?${params}`, {\n  headers: { 'X-API-KEY': 'YOUR_API_KEY' }\n})\n  .then(response => {\n    if (!response.ok) throw new Error('Download failed');\n    return response.blob();\n  })\n  .then(blob => {\n    const url = window.URL.createObjectURL(blob);\n    const a = document.createElement('a');\n    a.href = url;\n    a.download = `meeting_report.pdf`;\n    document.body.appendChild(a);\n    a.click();\n    a.remove();\n  })\n  .catch(error => console.error('Error:', error));\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp)",
+            "source": "import okhttp3.*;\nimport okio.BufferedSink;\nimport okio.Okio;\nimport java.io.File;\nimport java.io.IOException;\n\npublic class Main {\n  public static void main(String[] args) throws IOException {\n    OkHttpClient client = new OkHttpClient();\n\n    HttpUrl url = HttpUrl.parse(\"https://backend.mymeet.ai/api/storage/download\").newBuilder()\n        .addQueryParameter(\"meeting_id\", \"YOUR_MEETING_ID\")\n        .addQueryParameter(\"format\", \"pdf\")\n        .build();\n\n    Request request = new Request.Builder().url(url).addHeader(\"X-API-KEY\", \"YOUR_API_KEY\").get().build();\n\n    try (Response response = client.newCall(request).execute()) {\n      if (response.isSuccessful()) {\n        File file = new File(\"meeting_report.pdf\");\n        try (BufferedSink sink = Okio.buffer(Okio.sink(file))) {\n          sink.writeAll(response.body().source());\n        }\n        System.out.println(\"File saved to: \" + file.getAbsolutePath());\n      }\n    }\n  }\n}\n"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "description": "API key as a query parameter. Optional alternative to the recommended\n`X-API-KEY` header.\n",
+            "required": false,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          },
+          {
+            "name": "meeting_id",
+            "in": "query",
+            "description": "Meeting ID",
+            "required": true,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          },
+          {
+            "name": "template_name",
+            "in": "query",
+            "description": "Template type for meeting processing. Defines the structure and style of output",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Templates"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "string",
+              "default": "pdf",
+              "enum": [
+                "pdf",
+                "md",
+                "json",
+                "docx"
+              ]
+            }
+          },
+          {
+            "name": "timezone",
+            "in": "query",
+            "example": "UTC",
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meeting file in chosen format",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid meeting_id"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/generate-new-template": {
+      "post": {
+        "tags": [
+          "Generate template"
+        ],
+        "summary": "Generate new template for existing meeting",
+        "description": "Generate new template type for already processed meeting",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (Requests)",
+            "source": "import requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nheaders = {'X-API-KEY': API_KEY}\n\npayload = {\n    'meeting_id': 'YOUR_MEETING_ID',\n    'template_name': 'default-meeting'\n}\n\nresponse = requests.post(\n    \"https://backend.mymeet.ai/api/generate-new-template\",\n    headers=headers,\n    json=payload\n)\n\nif response.status_code == 200:\n    print(\"Generation started successfully\")\n    print(response.json())\nelse:\n    print(f\"Error {response.status_code}: {response.text}\")\n"
+          },
+          {
+            "lang": "cURL",
+            "label": "cURL",
+            "source": "curl -X POST \"https://backend.mymeet.ai/api/generate-new-template\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -d '{\n    \"meeting_id\": \"YOUR_MEETING_ID\",\n    \"template_name\": \"default-meeting\"\n  }'\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Fetch)",
+            "source": "const API_KEY = 'YOUR_API_KEY';\nconst payload = {\n  meeting_id: 'YOUR_MEETING_ID',\n  template_name: 'default-meeting'\n};\n\nfetch('https://backend.mymeet.ai/api/generate-new-template', {\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json',\n    'X-API-KEY': API_KEY\n  },\n  body: JSON.stringify(payload)\n})\n.then(response => response.json())\n.then(data => console.log('Generation started:', data))\n.catch(error => console.error('Error:', error));\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp)",
+            "source": "import okhttp3.*;\nimport java.io.IOException;\n\npublic class Main {\n  public static void main(String[] args) throws IOException {\n    OkHttpClient client = new OkHttpClient();\n\n    MediaType mediaType = MediaType.parse(\"application/json\");\n    String jsonBody = \"{\\\"meeting_id\\\":\\\"YOUR_MEETING_ID\\\",\\\"template_name\\\":\\\"default-meeting\\\"}\";\n    RequestBody body = RequestBody.create(mediaType, jsonBody);\n\n    Request request = new Request.Builder()\n        .url(\"https://backend.mymeet.ai/api/generate-new-template\")\n        .post(body)\n        .addHeader(\"Content-Type\", \"application/json\")\n        .addHeader(\"X-API-KEY\", \"YOUR_API_KEY\")\n        .build();\n\n    try (Response response = client.newCall(request).execute()) {\n      if (response.isSuccessful()) {\n        System.out.println(response.body().string());\n      }\n    }\n  }\n}\n"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "description": "API key as a query parameter. Optional alternative to the recommended\n`X-API-KEY` header.\n",
+            "required": false,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "meeting_id",
+                  "template_name"
+                ],
+                "properties": {
+                  "meeting_id": {
+                    "type": "string",
+                    "description": "Meeting ID for which to generate new template"
+                  },
+                  "template_name": {
+                    "$ref": "#/components/schemas/Templates"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successfully started template generation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "followup": {
+                      "type": "object",
+                      "description": "Meeting followup information"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - missing required parameters"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/clear-transcript": {
+      "post": {
+        "tags": [
+          "Meeting Management"
+        ],
+        "summary": "Clear meeting transcript",
+        "description": "Clear transcript for specific meeting",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (Requests)",
+            "source": "import requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nMEETING_ID = \"YOUR_MEETING_ID\"\nheaders = {'X-API-KEY': API_KEY}\n\npayload = {\n    'meeting_id': MEETING_ID\n}\n\nresponse = requests.post(\n    \"https://backend.mymeet.ai/api/clear-transcript\",\n    headers=headers,\n    json=payload\n)\n\nif response.status_code == 200:\n    print(\"Transcript cleared successfully\")\nelse:\n    print(f\"Error {response.status_code}: {response.text}\")\n"
+          },
+          {
+            "lang": "cURL",
+            "label": "cURL",
+            "source": "curl -X POST \"https://backend.mymeet.ai/api/clear-transcript\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -d '{\n    \"meeting_id\": \"YOUR_MEETING_ID\"\n  }'\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Fetch)",
+            "source": "const API_KEY = 'YOUR_API_KEY';\nconst payload = { meeting_id: 'YOUR_MEETING_ID' };\n\nfetch('https://backend.mymeet.ai/api/clear-transcript', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json', 'X-API-KEY': API_KEY },\n  body: JSON.stringify(payload)\n})\n.then(response => {\n  if (response.ok) console.log(\"Transcript cleared\");\n  else console.error(\"Error:\", response.status);\n})\n.catch(error => console.error('Error:', error));\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp)",
+            "source": "import okhttp3.*;\nimport java.io.IOException;\n\npublic class Main {\n  public static void main(String[] args) throws IOException {\n    OkHttpClient client = new OkHttpClient();\n\n    MediaType mediaType = MediaType.parse(\"application/json\");\n    RequestBody body = RequestBody.create(mediaType, \"{\\\"meeting_id\\\":\\\"YOUR_MEETING_ID\\\"}\");\n\n    Request request = new Request.Builder().url(\"https://backend.mymeet.ai/api/clear-transcript\").addHeader(\"X-API-KEY\", \"YOUR_API_KEY\").post(body).build();\n\n    try (Response response = client.newCall(request).execute()) {\n      if (response.isSuccessful()) System.out.println(\"Transcript cleared\");\n    }\n  }\n}\n"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "description": "API key as a query parameter. Optional alternative to the recommended\n`X-API-KEY` header.\n",
+            "required": false,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "meeting_id"
+                ],
+                "properties": {
+                  "meeting_id": {
+                    "type": "string",
+                    "description": "Meeting ID for which to clear transcript"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successfully started transcript clearing"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/undo-clear-transcript": {
+      "post": {
+        "tags": [
+          "Meeting Management"
+        ],
+        "summary": "Restore cleared transcript",
+        "description": "Restores previously cleared meeting transcript",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (Requests)",
+            "source": "import requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nMEETING_ID = \"YOUR_MEETING_ID\"\nheaders = {'X-API-KEY': API_KEY}\n\npayload = {\n    'meeting_id': MEETING_ID\n}\n\nresponse = requests.post(\n    \"https://backend.mymeet.ai/api/undo-clear-transcript\",\n    headers=headers,\n    json=payload\n)\n\nif response.status_code == 200:\n    print(\"Transcript restored successfully\")\n    print(response.json())\nelse:\n    print(f\"Error {response.status_code}: {response.text}\")\n"
+          },
+          {
+            "lang": "cURL",
+            "label": "cURL",
+            "source": "curl -X POST \"https://backend.mymeet.ai/api/undo-clear-transcript\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -d '{\n    \"meeting_id\": \"YOUR_MEETING_ID\"\n  }'\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Fetch)",
+            "source": "const API_KEY = 'YOUR_API_KEY';\nconst payload = { meeting_id: 'YOUR_MEETING_ID' };\n\nfetch('https://backend.mymeet.ai/api/undo-clear-transcript', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json', 'X-API-KEY': API_KEY },\n  body: JSON.stringify(payload)\n})\n.then(response => response.json())\n.then(data => console.log(\"Restored:\", data))\n.catch(error => console.error('Error:', error));\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp)",
+            "source": "import okhttp3.*;\nimport java.io.IOException;\n\npublic class Main {\n  public static void main(String[] args) throws IOException {\n    OkHttpClient client = new OkHttpClient();\n\n    MediaType mediaType = MediaType.parse(\"application/json\");\n    RequestBody body = RequestBody.create(mediaType, \"{\\\"meeting_id\\\":\\\"YOUR_MEETING_ID\\\"}\");\n\n    Request request = new Request.Builder().url(\"https://backend.mymeet.ai/api/undo-clear-transcript\").addHeader(\"X-API-KEY\", \"YOUR_API_KEY\").post(body).build();\n\n    try (Response response = client.newCall(request).execute()) {\n      if (response.isSuccessful()) System.out.println(response.body().string());\n    }\n  }\n}\n"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "description": "API key as a query parameter. Optional alternative to the recommended\n`X-API-KEY` header.\n",
+            "required": false,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "meeting_id"
+                ],
+                "properties": {
+                  "meeting_id": {
+                    "type": "string",
+                    "description": "Meeting ID for transcript restoration"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transcript successfully restored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "followup": {
+                      "type": "object",
+                      "description": "Updated meeting data with restored transcript"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/meeting": {
+      "put": {
+        "tags": [
+          "Meeting Management"
+        ],
+        "summary": "Rename meeting",
+        "description": "Change meeting title",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (Requests)",
+            "source": "import requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nMEETING_ID = \"YOUR_MEETING_ID\"\nheaders = {'X-API-KEY': API_KEY}\n\npayload = {\n    'meetingId': MEETING_ID,\n    'newName': 'New Meeting Title'\n}\n\nresponse = requests.put(\n    \"https://backend.mymeet.ai/api/meeting\",\n    headers=headers,\n    json=payload\n)\n\nif response.status_code == 200:\n    print(\"Meeting renamed successfully\")\nelif response.status_code == 400:\n    print(\"Error: Meeting is not ready for renaming\")\nelse:\n    print(f\"Error {response.status_code}: {response.text}\")\n"
+          },
+          {
+            "lang": "cURL",
+            "label": "cURL",
+            "source": "curl -X PUT \"https://backend.mymeet.ai/api/meeting\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -d '{\n    \"meetingId\": \"YOUR_MEETING_ID\",\n    \"newName\": \"New Meeting Title\"\n  }'\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Fetch)",
+            "source": "const API_KEY = 'YOUR_API_KEY';\nconst payload = {\n  meetingId: 'YOUR_MEETING_ID',\n  newName: 'New Meeting Title'\n};\n\nfetch('https://backend.mymeet.ai/api/meeting', {\n  method: 'PUT',\n  headers: { 'Content-Type': 'application/json', 'X-API-KEY': API_KEY },\n  body: JSON.stringify(payload)\n})\n.then(response => {\n  if (response.ok) console.log(\"Meeting renamed successfully\");\n  else console.error(\"Error:\", response.status);\n})\n.catch(error => console.error('Error:', error));\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp)",
+            "source": "import okhttp3.*;\nimport java.io.IOException;\n\npublic class Main {\n  public static void main(String[] args) throws IOException {\n    OkHttpClient client = new OkHttpClient();\n\n    MediaType mediaType = MediaType.parse(\"application/json\");\n    String json = \"{\\\"meetingId\\\":\\\"YOUR_MEETING_ID\\\",\\\"newName\\\":\\\"New Meeting Title\\\"}\";\n    RequestBody body = RequestBody.create(mediaType, json);\n\n    Request request = new Request.Builder().url(\"https://backend.mymeet.ai/api/meeting\").addHeader(\"X-API-KEY\", \"YOUR_API_KEY\").put(body).build();\n\n    try (Response response = client.newCall(request).execute()) {\n      if (response.isSuccessful()) System.out.println(\"Meeting renamed successfully\");\n    }\n  }\n}\n"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "description": "API key as a query parameter. Optional alternative to the recommended\n`X-API-KEY` header.\n",
+            "required": false,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "meetingId",
+                  "newName"
+                ],
+                "properties": {
+                  "meetingId": {
+                    "type": "string",
+                    "description": "Meeting ID to update"
+                  },
+                  "newName": {
+                    "type": "string",
+                    "description": "New meeting title"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Meeting title successfully updated"
+          },
+          "400": {
+            "description": "Meeting is not ready"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/meeting/{meetingId}/summary": {
+      "put": {
+        "tags": [
+          "Meeting Management"
+        ],
+        "summary": "Update meeting summary part",
+        "description": "Update specific part of meeting summary",
+        "x-codeSamples": [
+          {
+            "lang": "Python",
+            "label": "Python (Requests)",
+            "source": "import requests\n\nAPI_KEY = \"YOUR_API_KEY\"\nMEETING_ID = \"YOUR_MEETING_ID\"\n\nurl = f\"https://backend.mymeet.ai/api/meeting/{MEETING_ID}/summary\"\n\nheaders = {'X-API-KEY': API_KEY}\n\npayload = {\n    'templateName': 'default-meeting',\n    'entityName': 'summary',\n    'newSummaryText': 'Updated summary text for the meeting'\n}\n\nresponse = requests.put(\n    url,\n    headers=headers,\n    json=payload\n)\n\nif response.status_code == 200:\n    print(\"Summary part successfully updated\")\nelse:\n    print(f\"Error {response.status_code}: {response.text}\")\n"
+          },
+          {
+            "lang": "cURL",
+            "label": "cURL",
+            "source": "curl -X PUT \"https://backend.mymeet.ai/api/meeting/YOUR_MEETING_ID/summary\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-API-KEY: YOUR_API_KEY\" \\\n  -d '{\n    \"templateName\": \"default-meeting\",\n    \"entityName\": \"summary\",\n    \"newSummaryText\": \"Updated summary text for the meeting\"\n  }'\n"
+          },
+          {
+            "lang": "JavaScript",
+            "label": "JavaScript (Fetch)",
+            "source": "const API_KEY = 'YOUR_API_KEY';\nconst MEETING_ID = 'YOUR_MEETING_ID';\nconst payload = {\n  templateName: 'default-meeting',\n  entityName: 'summary',\n  newSummaryText: 'Updated summary text for the meeting'\n};\n\nfetch(`https://backend.mymeet.ai/api/meeting/${MEETING_ID}/summary`, {\n  method: 'PUT',\n  headers: { 'Content-Type': 'application/json', 'X-API-KEY': API_KEY },\n  body: JSON.stringify(payload)\n})\n.then(response => {\n  if (response.ok) console.log(\"Summary updated successfully\");\n  else console.error(\"Error:\", response.status);\n})\n.catch(error => console.error('Error:', error));\n"
+          },
+          {
+            "lang": "Java",
+            "label": "Java (OkHttp)",
+            "source": "import okhttp3.*;\nimport java.io.IOException;\n\npublic class Main {\n  public static void main(String[] args) throws IOException {\n    OkHttpClient client = new OkHttpClient();\n    String meetingId = \"YOUR_MEETING_ID\";\n\n    MediaType mediaType = MediaType.parse(\"application/json\");\n    String json = \"{\\\"templateName\\\":\\\"default-meeting\\\",\\\"entityName\\\":\\\"summary\\\",\\\"newSummaryText\\\":\\\"Updated summary text\\\"}\";\n    RequestBody body = RequestBody.create(mediaType, json);\n\n    Request request = new Request.Builder().url(\"https://backend.mymeet.ai/api/meeting/\" + meetingId + \"/summary\").addHeader(\"X-API-KEY\", \"YOUR_API_KEY\").put(body).build();\n\n    try (Response response = client.newCall(request).execute()) {\n      if (response.isSuccessful()) System.out.println(\"Summary updated successfully\");\n    }\n  }\n}\n"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "description": "API key as a query parameter. Optional alternative to the recommended\n`X-API-KEY` header.\n",
+            "required": false,
+            "explode": true,
+            "schema": {
+              "type": "string",
+              "format": "string"
+            }
+          },
+          {
+            "name": "meetingId",
+            "in": "path",
+            "required": true,
+            "description": "Meeting ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "templateName",
+                  "entityName",
+                  "newSummaryText"
+                ],
+                "properties": {
+                  "templateName": {
+                    "$ref": "#/components/schemas/Templates"
+                  },
+                  "entityName": {
+                    "$ref": "#/components/schemas/Entities"
+                  },
+                  "newSummaryText": {
+                    "type": "string",
+                    "description": "New summary text"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Summary part successfully updated"
+          },
+          "400": {
+            "description": "Meeting is not ready or wrong template/entity"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-KEY",
+        "description": "Recommended. Pass your API key in the `X-API-KEY` header on every\nrequest. Works on all endpoints.\n"
+      }
+    },
+    "schemas": {
+      "Recording": {
+        "type": "object",
+        "properties": {
+          "api_key": {
+            "description": "**Deprecated.** Use the `X-API-KEY` header instead. Sending the key in\nthe request body still works for backward compatibility but will be\nremoved in a future version.\n",
+            "deprecated": true,
+            "type": "string",
+            "format": "string"
+          },
+          "link": {
+            "description": "Meeting url",
+            "type": "string",
+            "format": "string",
+            "example": "https://meet.google.com/my-mee-tisbest"
+          },
+          "meeting_password": {
+            "description": "Meeting password (optional)",
+            "type": "string",
+            "format": "string"
+          },
+          "cron": {
+            "type": "string",
+            "format": "string",
+            "description": "UTC DateTime of meeting in cron format. See this [link](https://docs.oracle.com/cd/E12058_01/doc/doc.1014/e12030/cron_expressions.htm). Leave it empty to post NOW request",
+            "example": "30 12 25 4 *"
+          },
+          "participants": {
+            "type": "string",
+            "description": "list of emails to send followup",
+            "example": "example1@example.com, example2@examole.com"
+          },
+          "local_date_time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Local DateTime of meeting",
+            "example": "2026-04-25T15:30:00+03:00"
+          },
+          "title": {
+            "description": "Any title of your meeting. It will be the name of report",
+            "type": "string",
+            "example": "Daily sync"
+          },
+          "source": {
+            "type": "string",
+            "example": "gmeet",
+            "enum": [
+              "gmeet",
+              "zoom",
+              "yandextelemost",
+              "sberjazz",
+              "trueconf",
+              "konturtalk",
+              "msteams",
+              "jitsi"
+            ]
+          },
+          "template_name": {
+            "$ref": "#/components/schemas/Templates"
+          }
+        },
+        "required": [
+          "link",
+          "local_date_time",
+          "title",
+          "source",
+          "template_name"
+        ]
+      },
+      "Uploading": {
+        "type": "object",
+        "properties": {
+          "api_key": {
+            "type": "string",
+            "format": "string",
+            "deprecated": true,
+            "description": "**Deprecated.** Use the `X-API-KEY` header instead. Sending the key in\nthe request body still works for backward compatibility but will be\nremoved in a future version.\n"
+          },
+          "chunk_number": {
+            "type": "integer",
+            "description": "Current chunk number"
+          },
+          "chunk_total": {
+            "type": "integer",
+            "description": "Total number of chunks"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique file id. Use [uuid](https://www.uuidgenerator.net/) for this"
+          },
+          "filename": {
+            "type": "string",
+            "description": "File name with extension"
+          },
+          "localTime": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-04-25T15:30:00+03:00",
+            "description": "String local datetime"
+          },
+          "file": {
+            "description": "Bytes of current chunk",
+            "type": "string",
+            "format": "binary"
+          },
+          "title": {
+            "type": "string",
+            "description": "Meeting title"
+          },
+          "template_name": {
+            "$ref": "#/components/schemas/Templates"
+          },
+          "speakers_number": {
+            "type": "integer",
+            "description": "Number of speakers in the recording. 0 - auto",
+            "minimum": 0,
+            "default": 0
+          },
+          "meeting_id": {
+            "type": "string",
+            "description": "Unique meeting identifier. Auto-generated if not provided",
+            "format": "uuid",
+            "example": "123e4567-e89b-12d3-a456-426614174000"
+          }
+        },
+        "required": [
+          "chunk_number",
+          "chunk_total",
+          "id",
+          "filename",
+          "file",
+          "template_name"
+        ]
+      },
+      "Templates": {
+        "type": "string",
+        "description": "Template type for meeting processing. Defines the structure and style of output",
+        "enum": [
+          "default-meeting",
+          "sales-meeting",
+          "sales-coaching",
+          "hr-interview",
+          "research-interview",
+          "team-sync",
+          "article",
+          "lecture-notes",
+          "one-to-one",
+          "protocol",
+          "medicine"
+        ]
+      },
+      "Entities": {
+        "type": "string",
+        "description": "Available entity types in templates",
+        "enum": [
+          "summary",
+          "summary_agenda",
+          "sales_general",
+          "sales_coach",
+          "hr_summary",
+          "questions_and_answers",
+          "research_insights",
+          "team_sync_agenda",
+          "summary_by_speaker",
+          "workshop-double",
+          "seo-article-double",
+          "one_to_one",
+          "med-anamnesis",
+          "protocol",
+          "template-recommendation"
+        ]
+      }
+    }
+  }
+}

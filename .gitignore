@@ -1,0 +1,33 @@
+# Секреты и локальная конфигурация
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# Go артефакты
+/bin/
+/dist/
+/transcrib
+/src/transcrib
+vendor/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Локальные настройки AI-инструментов
+.claude/settings.local.json
+.claude/projects/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PII: анкета ЮKassa ИП (реквизиты/паспорт/банк) — не коммитим
+docs/Анкета_*

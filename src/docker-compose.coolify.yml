@@ -1,0 +1,76 @@
+# Coolify CD stack.
+# GitHub Actions builds ghcr.io/daniil4545/transcrib:sha-<git-sha> and updates APP_IMAGE
+# in Coolify before triggering redeploy.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: transcrib
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: transcrib
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transcrib -d transcrib"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "transcrib-coolify-{{.Name}}"
+
+  migrate:
+    image: ${APP_IMAGE:?APP_IMAGE must be set by Coolify}
+    # Coolify extension for one-shot services; plain `docker compose config` rejects it.
+    exclude_from_hc: true
+    command: ["/goose", "-dir", "/migrations", "postgres", "${DATABASE_URL:?DATABASE_URL must be set}", "up"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    logging:
+      driver: journald
+      options:
+        tag: "transcrib-coolify-{{.Name}}"
+
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE must be set by Coolify}
+    env_file: .env
+    healthcheck:
+      test: ["CMD", "/app", "healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    extra_hosts:
+      - "api.telegram.org:149.154.167.220"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "transcrib-coolify-{{.Name}}"
+
+volumes:
+  postgres_data:

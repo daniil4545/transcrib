@@ -1,0 +1,60 @@
+name: CI
+
+# Ветка dev здесь не слушается: те же проверки идёт джоба checks в deploy.yml,
+# иначе каждый push в dev поднимал два одинаковых прогона с двумя Postgres.
+#
+# Автотриггеры сняты 28.08.2026: GitHub Actions не используются, проверки идут
+# локально (make ci-check). Вернуть pull_request и push вместе с self-hosted
+# раннером.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go checks
+    # CI_RUNNER переключает джобу на self-hosted раннер без коммита.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: transcrib
+          POSTGRES_USER: transcrib
+          POSTGRES_PASSWORD: transcrib
+        # Случайный порт хоста: на self-hosted два раннера иначе дерутся за 5432.
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U transcrib -d transcrib"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+          --cpus 1
+          --memory 512m
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      # actions/checkout v5.0.0
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      # actions/setup-go v6.0.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+
+      # Контекст job недоступен в jobs.<id>.env, поэтому порт разрешается здесь.
+      - name: Export DATABASE_URL
+        run: echo "DATABASE_URL=postgres://transcrib:transcrib@localhost:${{ job.services.postgres.ports[5432] }}/transcrib?sslmode=disable" >> "$GITHUB_ENV"
+
+      - name: Check
+        run: make ci-check
