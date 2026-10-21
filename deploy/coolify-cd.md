@@ -187,7 +187,7 @@ Prod env was imported into Coolify-managed `environment_variables`; `DATABASE_UR
 internal `postgres:5432`. Live payment links and bank-card recurring were accepted on 2026-07-09:
 `RECURRING_PAYMENTS_ENABLED=true`, prod redeploy started `recurring_worker_started`, payment-link
 smoke activated a `900/900` subscription, and self-service disable cleared the saved method.
-Monitoring of the first real recurring charge is still open.
+
 
 GHCR pull access:
 

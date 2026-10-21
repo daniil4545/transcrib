@@ -131,7 +131,7 @@ Operations entry point: [`deploy/README.md`](deploy/README.md). Infrastructure c
 
 ## Status and limitations
 
-Production runs release tag `v0.1.0`. Direct payment links, `RECURRING_PAYMENTS_ENABLED=true`, and the self-service button that turns off auto-renewal passed a live smoke test on 2026-07-09. Product analytics in Metabase read production through a read-only datasource. The successful live payments so far were made by the owner: monitoring of the first payment from a real customer and the first real auto-charge is still open.
+Production runs release tag `v0.1.0`. Direct payment links, `RECURRING_PAYMENTS_ENABLED=true`, and the self-service button that turns off auto-renewal passed a live smoke test on 2026-07-09. Product analytics in Metabase read production through a read-only datasource.
 
 Known limits, also listed in [`docs/architecture.md`](docs/architecture.md):
 
