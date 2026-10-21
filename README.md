@@ -18,7 +18,7 @@ You send a meeting link, the bot joins, records, and returns the transcript and 
 
 transcrib joins meetings in Zoom, Google Meet, and Yandex Telemost, records the conversation, and sends two files to Telegram: a transcript split by speaker and an AI summary with decisions and tasks.
 
-The service is an integration orchestrator. It has no ASR of its own and no meeting bot of its own: an external transcription provider does the heavy work, and transcrib owns the job lifecycle, billing, and delivery. It ran in production with a paid subscription (1990 RUB per month for 15 hours, 3 hours of trial) until the product was closed in September 2026; this repository is a snapshot of that code. Internal accounting is in minutes.
+The service is an integration orchestrator. It has no ASR of its own and no meeting bot of its own: an external transcription provider does the heavy work, and transcrib owns the job lifecycle, billing, and delivery. It is a production service with a paid subscription (1990 RUB per month for 15 hours, 3 hours of trial). Internal accounting is in minutes.
 
 User-facing texts (bot replies, buttons, the LLM summary prompts) are in Russian, because the product serves Russian-speaking users. Code, comments, and documentation are in English.
 
@@ -131,7 +131,7 @@ Operations entry point: [`deploy/README.md`](deploy/README.md). Infrastructure c
 
 ## Status and limitations
 
-The product was closed on 2026-09-22. Production ran release tag `v0.1.0`. Direct payment links, `RECURRING_PAYMENTS_ENABLED=true`, and the self-service button that turns off auto-renewal passed a live smoke test on 2026-07-09. Product analytics in Metabase read production through a read-only datasource. The successful live payments so far were made by the owner: monitoring of the first payment from a real customer and the first real auto-charge is still open.
+Production runs release tag `v0.1.0`. Direct payment links, `RECURRING_PAYMENTS_ENABLED=true`, and the self-service button that turns off auto-renewal passed a live smoke test on 2026-07-09. Product analytics in Metabase read production through a read-only datasource. The successful live payments so far were made by the owner: monitoring of the first payment from a real customer and the first real auto-charge is still open.
 
 Known limits, also listed in [`docs/architecture.md`](docs/architecture.md):
 
