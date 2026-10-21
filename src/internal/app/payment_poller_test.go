@@ -70,41 +70,41 @@ func TestPaymentPoller_FinalizesSucceededPayment(t *testing.T) {
 
 	pays := paymentRows(t, s, userID)
 	if len(pays) != 1 {
-		t.Fatalf("payments count = %d, ожидали 1", len(pays))
+		t.Fatalf("payments count = %d, want 1", len(pays))
 	}
 	if pays[0].status != "succeeded" {
-		t.Fatalf("payment.status = %q, ожидали succeeded", pays[0].status)
+		t.Fatalf("payment.status = %q, want succeeded", pays[0].status)
 	}
 	if pays[0].subID == nil {
-		t.Fatal("payment.subscription_id = NULL, ожидали подписку")
+		t.Fatal("payment.subscription_id = NULL, want a subscription")
 	}
 	subs := subRows(t, s, userID)
 	if len(subs) != 1 {
-		t.Fatalf("subscriptions count = %d, ожидали 1", len(subs))
+		t.Fatalf("subscriptions count = %d, want 1", len(subs))
 	}
 	if subs[0].minutesLimit != 900 || subs[0].minutesBalance != 900 {
-		t.Fatalf("subscription minutes = %d/%d, ожидали 900/900", subs[0].minutesBalance, subs[0].minutesLimit)
+		t.Fatalf("subscription minutes = %d/%d, want 900/900", subs[0].minutesBalance, subs[0].minutesLimit)
 	}
 	if len(notified) != 1 || notified[0].chatID != userID {
-		t.Fatalf("notified = %#v, ожидали chatID %d", notified, userID)
+		t.Fatalf("notified = %#v, want chatID %d", notified, userID)
 	}
 	if !strings.Contains(notified[0].text, "Следующая оплата") || !strings.Contains(notified[0].text, subs[0].expires.Format("02.01.2006")) {
-		t.Fatalf("notify text = %q, ожидали дату следующей оплаты", notified[0].text)
+		t.Fatalf("notify text = %q, want the next payment date", notified[0].text)
 	}
 
 	providerPaidAt := paymentProviderPaidAt(t, s, userID)
 	if providerPaidAt == nil || providerPaidAt.UTC().Format(time.RFC3339) != "2026-06-30T01:02:03Z" {
-		t.Fatalf("provider_paid_at = %v, ожидали captured_at из ЮKassa", providerPaidAt)
+		t.Fatalf("provider_paid_at = %v, want captured_at from YooKassa", providerPaidAt)
 	}
 
 	if err := poller.tickOnce(ctx); err != nil {
 		t.Fatalf("tickOnce #2: %v", err)
 	}
 	if len(subRows(t, s, userID)) != 1 {
-		t.Fatal("повторный polling создал вторую подписку")
+		t.Fatal("repeated polling created a second subscription")
 	}
 	if len(notified) != 1 {
-		t.Fatalf("повторный polling отправил лишнее уведомление: %#v", notified)
+		t.Fatalf("repeated polling sent an extra notification: %#v", notified)
 	}
 }
 
@@ -157,7 +157,7 @@ func TestPaymentPoller_PollsOldPendingPayment(t *testing.T) {
 		t.Fatalf("tickOnce: %v", err)
 	}
 	if calls != 1 {
-		t.Fatalf("poll calls = %d, ожидали 1 для pending старше 24 часов", calls)
+		t.Fatalf("poll calls = %d, want 1 for pending older than 24 hours", calls)
 	}
 }
 
@@ -209,13 +209,13 @@ func TestPaymentPoller_DoesNotFinalizeMismatchedPayment(t *testing.T) {
 
 	pays := paymentRows(t, s, userID)
 	if len(pays) != 1 {
-		t.Fatalf("payments count = %d, ожидали 1", len(pays))
+		t.Fatalf("payments count = %d, want 1", len(pays))
 	}
 	if pays[0].status != "pending" {
-		t.Fatalf("payment.status = %q, ожидали pending", pays[0].status)
+		t.Fatalf("payment.status = %q, want pending", pays[0].status)
 	}
 	if len(subRows(t, s, userID)) != 0 {
-		t.Fatal("mismatched payment создал подписку")
+		t.Fatal("mismatched payment created a subscription")
 	}
 }
 
@@ -248,7 +248,7 @@ func TestSamePaymentIntent_StrictMetadataForIntent(t *testing.T) {
 				Metadata:      tc.metadata,
 			})
 			if got != tc.want {
-				t.Fatalf("samePaymentIntent = %v, ожидали %v", got, tc.want)
+				t.Fatalf("samePaymentIntent = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -305,13 +305,13 @@ func TestPaymentPoller_FailsCanceledPayment(t *testing.T) {
 
 	pays := paymentRows(t, s, userID)
 	if len(pays) != 1 {
-		t.Fatalf("payments count = %d, ожидали 1", len(pays))
+		t.Fatalf("payments count = %d, want 1", len(pays))
 	}
 	if pays[0].status != "failed" {
-		t.Fatalf("payment.status = %q, ожидали failed", pays[0].status)
+		t.Fatalf("payment.status = %q, want failed", pays[0].status)
 	}
 	if len(subRows(t, s, userID)) != 0 {
-		t.Fatal("canceled payment создал подписку")
+		t.Fatal("canceled payment created a subscription")
 	}
 }
 
@@ -368,11 +368,11 @@ func TestPaymentPoller_CanceledDefaultOnDirectDoesNotTouchRecurringProfile(t *te
 
 	pays := paymentRows(t, s, userID)
 	if len(pays) != 1 || pays[0].status != string(PaymentFailed) {
-		t.Fatalf("payments = %#v, ожидали один failed payment", pays)
+		t.Fatalf("payments = %#v, want one failed payment", pays)
 	}
 	profile := recurringProfile(t, s, userID)
 	if profile.status != "active" || !profile.nextChargeAt.Equal(nextCharge) {
-		t.Fatalf("profile = %#v, ожидали active без изменения next_charge_at", profile)
+		t.Fatalf("profile = %#v, want active without a next_charge_at change", profile)
 	}
 }
 
@@ -431,10 +431,10 @@ func TestPaymentPoller_CanceledRecurringMarksFailure(t *testing.T) {
 
 	profile := recurringProfile(t, s, userID)
 	if profile.status != "charge_failed" || profile.lastError == nil {
-		t.Fatalf("profile = %#v, ожидали charge_failed с last_error", profile)
+		t.Fatalf("profile = %#v, want charge_failed with last_error", profile)
 	}
 	if len(notified) != 1 || !strings.Contains(notified[0], "Не удалось автопродлить") {
-		t.Fatalf("notified = %#v, ожидали recurring failure notification", notified)
+		t.Fatalf("notified = %#v, want recurring failure notification", notified)
 	}
 }
 
@@ -489,7 +489,7 @@ func TestPaymentPoller_CanceledRecurringPermissionRevokedBlocksProfile(t *testin
 
 	profile := recurringProfile(t, s, userID)
 	if profile.status != "blocked" || profile.lastError == nil {
-		t.Fatalf("profile = %#v, ожидали blocked с last_error", profile)
+		t.Fatalf("profile = %#v, want blocked with last_error", profile)
 	}
 }
 
@@ -544,11 +544,11 @@ func TestPaymentPoller_CanceledIntentMismatchDoesNotMutatePaymentOrProfile(t *te
 
 	pays := paymentRows(t, s, userID)
 	if len(pays) != 1 || pays[0].status != string(PaymentPending) {
-		t.Fatalf("payments = %#v, ожидали pending payment без мутации", pays)
+		t.Fatalf("payments = %#v, want pending payment without mutation", pays)
 	}
 	profile := recurringProfile(t, s, userID)
 	if profile.status != "active" || !profile.nextChargeAt.Equal(nextCharge) {
-		t.Fatalf("profile = %#v, ожидали active без мутации", profile)
+		t.Fatalf("profile = %#v, want active without mutation", profile)
 	}
 }
 
@@ -565,7 +565,7 @@ func TestRecurringCancellationRetryable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		if got := recurringCancellationRetryable(tc.reason); got != tc.want {
-			t.Fatalf("recurringCancellationRetryable(%q) = %v, ожидали %v", tc.reason, got, tc.want)
+			t.Fatalf("recurringCancellationRetryable(%q) = %v, want %v", tc.reason, got, tc.want)
 		}
 	}
 }

@@ -1,26 +1,26 @@
-# Архитектура transcrib
+# transcrib architecture
 
-> **Канон для:** модулей `src/internal/app/`, runtime-потока, state machine `Job`, интерфейсов `TranscriptionProvider`/`Summarizer`/`DocumentDelivery`, критических алгоритмов и архитектурных ограничений.
-> **Не дублировать здесь:** продуктовые требования F0-F9 (`docs/product.md`), детальную схему БД и SQL-паттерны (`docs/db.md`), платежный runbook (`docs/payments.md`), инфраструктуру (`docs/deployment.md`).
+> **Canon for:** the `src/internal/app/` modules, the runtime flow, the `Job` state machine, the `TranscriptionProvider`/`Summarizer`/`DocumentDelivery` interfaces, critical algorithms and architectural constraints.
+> **Do not duplicate here:** product requirements F0-F9 (`docs/product.md`), the detailed DB schema and SQL patterns (`docs/db.md`), the payment runbook (`docs/payments.md`), infrastructure (`docs/deployment.md`).
 
-Версия: 1.3, 2026-07-06. Документ описывает текущий кодовый срез: release 0.1 baseline с hourly billing #7, локальный #12 payment nudges / `analytics_events`, recurring hardening, billing expiry fix через migration `00014` и token erasure на disable через migration `00015`. Google Drive delivery, OAuth callback, `/reconnect` и `awaiting_reauth` описаны отдельно как post-0.1 целевой срез, потому что соответствующих Go-файлов в текущем коде нет.
+Version: 1.3, 2026-07-06. The document describes the current code slice: the release 0.1 baseline with hourly billing #7, local #12 payment nudges / `analytics_events`, recurring hardening, the billing expiry fix via migration `00014` and token erasure on disable via migration `00015`. Google Drive delivery, the OAuth callback, `/reconnect` and `awaiting_reauth` are described separately as the post-0.1 target slice, because the corresponding Go files do not exist in the current code.
 
-## 1. Назначение сервиса
+## 1. Service purpose
 
-`transcrib` - Go-монолит Telegram-бота «transcrib». Пользователь присылает ссылку на Zoom, Google Meet или Яндекс Телемост, сервис отправляет внешнего бота поставщика транскрибации на встречу, получает транскрипт, формирует саммари и доставляет `.md`-файлы в Telegram.
+`transcrib` is a Go monolith, the Telegram bot "transcrib". The user sends a Zoom, Google Meet or Yandex Telemost link, the service sends the transcription provider's external bot to the meeting, receives the transcript, builds a summary and delivers `.md` files to Telegram.
 
-Сервис является оркестратором интеграций, а не AI/ML-системой:
+The service is an integration orchestrator, not an AI/ML system:
 
-- запись встречи, ASR и диаризацию делает внешний `TranscriptionProvider`;
-- саммари делает либо внешний provider, если он вернул готовый отчет, либо наш `Summarizer` через OpenRouter;
-- UI, команды, платежи и выдача результата идут через Telegram;
-- квоты, очередь и состояние хранятся в PostgreSQL.
+- meeting recording, ASR and diarization are done by the external `TranscriptionProvider`;
+- the summary is made either by the external provider, if it returned a ready report, or by our `Summarizer` through OpenRouter;
+- UI, commands, payments and result delivery go through Telegram;
+- quotas, queue and state are stored in PostgreSQL.
 
-Текущий код: Telegram-доставка, Speech2Text/mymeet/mock provider'ы, OpenRouter/mock/off summarizer, direct payment links ЮKassa, F9-пуши/payment nudges, `analytics_events`, панель «Мои звонки». Google Docs - post-0.1.
+Current code: Telegram delivery, Speech2Text/mymeet/mock providers, OpenRouter/mock/off summarizer, YooKassa direct payment links, F9 pushes/payment nudges, `analytics_events`, the "My calls" panel. Google Docs are post-0.1.
 
-Billing go-live #7 поменял продуктовый контракт с количества встреч на часы: 3 часа trial, 15 часов/мес, runtime-учет в минутах. Подробный контракт зафиксирован в `docs/product.md`, `docs/payments.md` и `docs/db.md`; исторический слайс удалён из `docs/plans/`.
+Billing go-live #7 changed the product contract from a number of meetings to hours: 3 hours of trial, 15 hours/month, minutes in runtime accounting. The detailed contract is recorded in `docs/product.md`, `docs/payments.md` and `docs/db.md`; the historical slice was removed from `docs/plans/`.
 
-## 2. Runtime-схема
+## 2. Runtime scheme
 
 ```
 Telegram long polling
@@ -29,14 +29,14 @@ Telegram long polling
 src/cmd/transcrib/main.go
         |
         +--> tg.go
-        |       - команды и consent gate
-        |       - прием meeting URL
-        |       - сбор email и отправка ссылки оплаты
-        |       - "Мои звонки", отмена, повторная выдача
+        |       - commands and consent gate
+        |       - meeting URL intake
+        |       - email collection and payment link sending
+        |       - "My calls", cancel, re-delivery
         |
         +--> billing.go
-        |       - POST /v3/payments и GET /v3/payments/{id}
-        |       - REST refund через ЮKassa
+        |       - POST /v3/payments and GET /v3/payments/{id}
+        |       - REST refund via YooKassa
         |
         +--> storage.go  <--------------------+
         |       - PostgreSQL                  |
@@ -45,8 +45,8 @@ src/cmd/transcrib/main.go
         |       - payment/refund invariants   |
         |                                     |
         +--> payment_poller.go
-        |       - polling pending-платежей ЮKassa
-        |       - финализация подписки
+        |       - polling pending YooKassa payments
+        |       - subscription finalization
         |
         +--> orchestrator.go -----------------+
         |       - worker tick 30 sec
@@ -64,258 +64,258 @@ src/cmd/transcrib/main.go
                 - due recurring_profiles -> charging intent -> YooKassa recurring payment
 
 External integrations:
-Telegram Bot API, Speech2Text API, mymeet API, OpenRouter API, ЮKassa REST API, PostgreSQL 16
+Telegram Bot API, Speech2Text API, mymeet API, OpenRouter API, YooKassa REST API, PostgreSQL 16
 ```
 
-В одном процессе сейчас работают пять активных веток выполнения:
+Five active execution branches currently run in one process:
 
-1. Telegram long polling в `bot.Start()`.
-2. `Orchestrator.Run(ctx)` - worker state machine по jobs.
-3. `PaymentPoller.Run(ctx)` - polling pending-платежей ЮKassa.
-4. `Notifier.Run(ctx)` - отдельный F9-тик.
-5. `RecurringWorker.Run(ctx)` - worker автопродления; при `RECURRING_PAYMENTS_ENABLED=false` сразу выходит и не создаёт списаний.
+1. Telegram long polling in `bot.Start()`.
+2. `Orchestrator.Run(ctx)` - the worker state machine over jobs.
+3. `PaymentPoller.Run(ctx)` - polling of pending YooKassa payments.
+4. `Notifier.Run(ctx)` - a separate F9 tick.
+5. `RecurringWorker.Run(ctx)` - the auto-renewal worker; with `RECURRING_PAYMENTS_ENABLED=false` it exits immediately and creates no charges.
 
-HTTP-сервера в release 0.1 нет. Межпроцессной коммуникации нет. Состояние и очередь - через PostgreSQL.
+There is no HTTP server in release 0.1. There is no inter-process communication. State and queue go through PostgreSQL.
 
-## 3. Модули
+## 3. Modules
 
-Все рабочие Go-файлы лежат в одном пакете `src/internal/app/`. Плоская структура намеренная: имя файла соответствует домену ответственности.
+All working Go files live in one package, `src/internal/app/`. The flat structure is intentional: the file name matches the domain of responsibility.
 
-| Файл | Ответственность |
+| File | Responsibility |
 |---|---|
-| `src/cmd/transcrib/main.go` | Bootstrap: `slog`, `LoadConfig`, `pgxpool`, сбор provider map, выбор активного provider, создание `Bot`, `TelegramDelivery`, `Orchestrator`, `PaymentPoller`, `Notifier`, signal shutdown. |
-| `config.go` | Env-контракт: БД/бот, active transcription provider, summarizer, квоты, watchdog, direct ЮKassa payments/refund и receipt. |
-| `domain.go` | Чистые типы `User`, `Job`, `Subscription`, `Payment`, `Refund` и enum'ы статусов. `Job` хранит `Provider`, `StatusMessageID`, `SummaryMD`. |
-| `storage.go` | Владелец транзакционных инвариантов: quota reserve/refund, active cap, same-URL dedup, worker claim, status guards, payment idempotency, refund phases, F9/nudge-выборки, `analytics_events`. |
-| `tg.go` | Telegram UI: consent gate, команды, прием ссылок, создание Job, сбор email для чека, отправка payment link, панель «Мои звонки», отмена, повторная доставка transcript/summary. |
-| `billing.go` | ЮKassa REST client: создание платежа, polling payment, full refund; legacy Telegram invoice helpers оставлены для старого пути. |
-| `payment_poller.go` | Polling pending-платежей ЮKassa, сверка суммы/currency/user metadata, финализация подписки, recurring failure path и уведомление пользователя. |
-| `orchestrator.go` | Worker state machine: submit, poll, fetch, delivery transcript, summary path, failure/refund transitions, status-message edits. |
-| `notifier.go` | F9/payment nudges: trial заканчивается, просмотр оплаты без оплаты, платный баланс ниже часа, платные часы закончились, подписка истекает, подписка истекла. Инвариант: сначала send, потом mark. |
-| `transcription.go` | Интерфейс `TranscriptionProvider`, `ProviderStatus`, `Result`, `ErrEmptyTranscript`. |
-| `speech2text.go` | Provider Speech2Text: join, poll recognition, fetch `result/txt` и `result/json`, mapping статусов, empty transcript. |
-| `mymeet.go` | Provider mymeet: record meeting, poll status, fetch report, render transcript, extract provider-summary from `templates[]`, degraded `Cancel`. |
-| `mock.go` | Mock provider для разработки и тестов. |
-| `summary.go` | Интерфейс `Summarizer`, `MockSummarizer`, встроенный prompt. |
-| `openrouter.go` | OpenRouter summarizer: chat completions, chunking, map-reduce для длинного транскрипта. |
-| `delivery.go` | Интерфейс `DocumentDelivery` и helpers имен файлов/времени МСК. |
-| `telegram_delivery.go` | Реализация `DocumentDelivery`: отправка `.md`-файла через Telegram Bot API. |
+| `src/cmd/transcrib/main.go` | Bootstrap: `slog`, `LoadConfig`, `pgxpool`, building the provider map, choosing the active provider, creating `Bot`, `TelegramDelivery`, `Orchestrator`, `PaymentPoller`, `Notifier`, signal shutdown. |
+| `config.go` | Env contract: DB/bot, active transcription provider, summarizer, quotas, watchdog, direct YooKassa payments/refund and receipt. |
+| `domain.go` | Pure types `User`, `Job`, `Subscription`, `Payment`, `Refund` and status enums. `Job` holds `Provider`, `StatusMessageID`, `SummaryMD`. |
+| `storage.go` | Owner of the transactional invariants: quota reserve/refund, active cap, same-URL dedup, worker claim, status guards, payment idempotency, refund phases, F9/nudge selections, `analytics_events`. |
+| `tg.go` | Telegram UI: consent gate, commands, link intake, Job creation, email collection for the receipt, sending the payment link, the "My calls" panel, cancel, transcript/summary re-delivery. |
+| `billing.go` | YooKassa REST client: payment creation, payment polling, full refund; legacy Telegram invoice helpers are kept for the old path. |
+| `payment_poller.go` | Polling of pending YooKassa payments, reconciliation of amount/currency/user metadata, subscription finalization, recurring failure path and user notification. |
+| `orchestrator.go` | Worker state machine: submit, poll, fetch, transcript delivery, summary path, failure/refund transitions, status-message edits. |
+| `notifier.go` | F9/payment nudges: the trial is ending, payment viewed but not paid, paid balance below an hour, paid hours ran out, the subscription is expiring, the subscription expired. Invariant: send first, then mark. |
+| `transcription.go` | The `TranscriptionProvider` interface, `ProviderStatus`, `Result`, `ErrEmptyTranscript`. |
+| `speech2text.go` | Speech2Text provider: join, poll recognition, fetch `result/txt` and `result/json`, status mapping, empty transcript. |
+| `mymeet.go` | mymeet provider: record meeting, poll status, fetch report, render transcript, extract provider-summary from `templates[]`, degraded `Cancel`. |
+| `mock.go` | Mock provider for development and tests. |
+| `summary.go` | The `Summarizer` interface, `MockSummarizer`, the built-in prompt. |
+| `openrouter.go` | OpenRouter summarizer: chat completions, chunking, map-reduce for a long transcript. |
+| `delivery.go` | The `DocumentDelivery` interface and helpers for file names/Moscow time. |
+| `telegram_delivery.go` | Implementation of `DocumentDelivery`: sending an `.md` file through the Telegram Bot API. |
 
-В `main.go` строится map всех сконфигурированных provider'ов, а не только активного. Причина: старые jobs несут `job.provider`; отмена и повторная выдача должны обращаться к тому provider'у, который создал `external_job_id`, даже после смены `TRANSCRIPTION_PROVIDER`. Новый Job и `Orchestrator` получают только активный provider.
+`main.go` builds a map of all configured providers, not only the active one. The reason: old jobs carry `job.provider`; cancel and re-delivery must go to the provider that created the `external_job_id`, even after `TRANSCRIPTION_PROVIDER` is changed. A new Job and the `Orchestrator` get only the active provider.
 
-## 4. Внешние интеграции и конфиг-переключатели
+## 4. External integrations and config switches
 
-| Интеграция | Роль | Код |
+| Integration | Role | Code |
 |---|---|---|
-| Telegram Bot API | UI, long polling, документы, платежные update'ы | `tg.go`, `telegram_delivery.go` |
-| ЮKassa REST API | Создание payment link, polling оплаты, full refund | `tg.go`, `billing.go`, `payment_poller.go`, `storage.go` |
-| Speech2Text API | Экономически целевой provider транскрибации | `speech2text.go` |
-| mymeet API | Альтернативный/fallback provider, может вернуть provider-summary | `mymeet.go` |
-| OpenRouter API | Саммари F3, когда provider не вернул готовое summary | `openrouter.go` |
-| PostgreSQL 16 | Очередь jobs, квоты, платежи, состояние | `storage.go` |
+| Telegram Bot API | UI, long polling, documents, payment updates | `tg.go`, `telegram_delivery.go` |
+| YooKassa REST API | Payment link creation, payment polling, full refund | `tg.go`, `billing.go`, `payment_poller.go`, `storage.go` |
+| Speech2Text API | Economically preferred transcription provider | `speech2text.go` |
+| mymeet API | Alternative/fallback provider, may return a provider-summary | `mymeet.go` |
+| OpenRouter API | F3 summary, when the provider did not return a ready summary | `openrouter.go` |
+| PostgreSQL 16 | Jobs queue, quotas, payments, state | `storage.go` |
 
-Основные переключатели:
+Main switches:
 
-- `TRANSCRIPTION_PROVIDER=mock|speech2text|mymeet` - активный provider для новых jobs и orchestrator.
-- `SUMMARIZER_PROVIDER=off|mock|openrouter` - путь саммари.
-- `TRIAL_HOURS_LIMIT` - лимит триала в часах; runtime хранит минуты.
-- `SUBSCRIPTION_HOURS_PER_PERIOD` - лимит подписки в часах; successful payment создает минутный баланс.
-- `JOB_MAX_AGE_HOURS` - watchdog для зависших jobs.
-- `JOB_START_TIMEOUT_MINUTES` - общий timeout для `created|joining` до начала записи.
-- `JOB_SUBMIT_MAX_ATTEMPTS` - best-effort лимит Submit-попыток в памяти app-процесса.
-- `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY`, `PAYMENT_RETURN_URL` - direct payments и refund.
-- `PAYMENT_POLL_INTERVAL_SECONDS` - частота polling pending-платежей и recurring worker tick.
-- `RECURRING_PAYMENTS_ENABLED` - отдельный рубильник merchant-initiated автосписаний, default false.
-- `PROVIDER_TOKEN` - legacy Telegram Payments provider token, не нужен для целевого direct flow.
+- `TRANSCRIPTION_PROVIDER=mock|speech2text|mymeet` - the active provider for new jobs and the orchestrator.
+- `SUMMARIZER_PROVIDER=off|mock|openrouter` - the summary path.
+- `TRIAL_HOURS_LIMIT` - the trial limit in hours; runtime stores minutes.
+- `SUBSCRIPTION_HOURS_PER_PERIOD` - the subscription limit in hours; a successful payment creates a minute balance.
+- `JOB_MAX_AGE_HOURS` - watchdog for stuck jobs.
+- `JOB_START_TIMEOUT_MINUTES` - common timeout for `created|joining` before recording starts.
+- `JOB_SUBMIT_MAX_ATTEMPTS` - best-effort limit of Submit attempts in app process memory.
+- `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY`, `PAYMENT_RETURN_URL` - direct payments and refund.
+- `PAYMENT_POLL_INTERVAL_SECONDS` - polling frequency of pending payments and the recurring worker tick.
+- `RECURRING_PAYMENTS_ENABLED` - a separate kill switch for merchant-initiated auto-charges, default false.
+- `PROVIDER_TOKEN` - the legacy Telegram Payments provider token, not needed for the target direct flow.
 
-## 5. Данные
+## 5. Data
 
-Детальная схема БД, индексы, SQL и Go-типы - `docs/db.md`. Здесь только архитектурная карта текущих примененных миграций.
+The detailed DB schema, indexes, SQL and Go types are in `docs/db.md`. Here is only the architectural map of the currently applied migrations.
 
-Текущие таблицы:
+Current tables:
 
 - `users` - Telegram user, consent, trial counters, F9 notification marks.
-- `jobs` - встреча и state machine: `provider`, `external_job_id`, `status_message_id`, `summary_md`, `raw_provider_response`, quota binding.
-- `subscriptions` - один оплаченный период на один successful payment.
-- `payments` - ЮKassa payment intent: direct flow идемпотентен по `payment_intent_key` и `provider_payment_charge_id`; legacy Telegram flow - по `telegram_payment_charge_id`.
-- `recurring_profiles` - сохранённый payment method ЮKassa, статус, отключение и дата следующего автосписания.
-- `refunds` - двухфазный full refund.
-- `analytics_events` - append-only UX-события и `nudge_sent` для аналитики/дедупа дожимов.
+- `jobs` - a meeting and its state machine: `provider`, `external_job_id`, `status_message_id`, `summary_md`, `raw_provider_response`, quota binding.
+- `subscriptions` - one paid period per one successful payment.
+- `payments` - a YooKassa payment intent: the direct flow is idempotent by `payment_intent_key` and `provider_payment_charge_id`; the legacy Telegram flow by `telegram_payment_charge_id`.
+- `recurring_profiles` - the saved YooKassa payment method, status, disable and the date of the next auto-charge.
+- `refunds` - a two-phase full refund.
+- `analytics_events` - append-only UX events and `nudge_sent` for analytics/nudge dedup.
 
-Ключевые индексы/ограничения:
+Key indexes/constraints:
 
-- same-URL dedup для активных jobs;
-- worker index для `FOR UPDATE SKIP LOCKED`;
-- уникальность `payment_intent_key` и `provider_payment_charge_id` для direct payments;
-- уникальность Telegram payment charge id для legacy Telegram Payments;
-- уникальность refund idempotence key.
-- индексы `analytics_events` по `(user_id,event_type,occurred_at)` и `(event_type,occurred_at)` для воронки и F9-дедупа.
+- same-URL dedup for active jobs;
+- the worker index for `FOR UPDATE SKIP LOCKED`;
+- uniqueness of `payment_intent_key` and `provider_payment_charge_id` for direct payments;
+- uniqueness of the Telegram payment charge id for legacy Telegram Payments;
+- uniqueness of the refund idempotence key;
+- `analytics_events` indexes on `(user_id,event_type,occurred_at)` and `(event_type,occurred_at)` for the funnel and F9 dedup.
 
-Post-0.1 Google-схема (`google_accounts`, `reauth_from`, `awaiting_reauth` helpers) должна быть описана отдельно от текущих applied migrations, чтобы не выглядеть реализованной частью release 0.1.
+The post-0.1 Google schema (`google_accounts`, `reauth_from`, `awaiting_reauth` helpers) must be described separately from the currently applied migrations, so it does not look like an implemented part of release 0.1.
 
-## 6. Основной поток встречи
+## 6. Main meeting flow
 
-Фактический happy path release 0.1:
+The actual happy path of release 0.1:
 
-1. `Bot.gate` через `Storage.GetOrCreateUser` создает или читает пользователя.
-2. До `consent_at != NULL` gate пропускает только `/start`, `/help`, consent callbacks и payment update'ы.
-3. `Bot.onText` ищет meeting URL, валидирует supported host и вызывает `Storage.CreateJob`.
-4. `CreateJob` в одной транзакции блокирует user row, проверяет same-URL dedup, active cap 4, резервирует до 60 минут из платной квоты или триала и вставляет `jobs(status=created, provider=activeProvider, reserved_minutes=...)`.
-5. `tg.go` отправляет статус-сообщение и сохраняет `status_message_id`.
-6. `Orchestrator.tickOnce` claim'ит jobs через `Storage.ClaimJobsForWork`.
-7. `advance(created)` вызывает `submitJob`: `provider.Submit`, затем `SetJobSubmitted(created -> joining)`.
-8. `advance(joining|recording|processing)` вызывает `pollJob`: `provider.Poll` и переводит фазу в `recording`, `processing`, `done` или `failed`.
-9. При `StatusDone` `finishTranscription` вызывает `provider.Fetch`.
-10. Если `SUMMARIZER_PROVIDER=off`, транскрипт доставляется через `TelegramDelivery.Deliver`, затем `SetJobDone`.
-11. Если provider вернул `Result.SummaryMarkdown`, summary кэшируется и вместе с транскриптом доставляется одной Telegram media group из двух файлов, затем `SetJobDone`.
-12. Если summarizer включен, `SetJobSummarizing`, затем `summarizeJob`: fetch transcript, `Summarizer.Summarize`, cache `summary_md`, deliver one grouped Telegram media set with `summary_*.md` and `transcript_*.md`, `SetJobDone`.
-13. Если `Summarizer.Summarize` упал, `summarizeJob` доставляет transcript-only файл и переводит Job в `failed_summary`.
-14. `SetJobDone` атомарно закрывает Job, финализирует `billed_minutes` по duration и для trial увеличивает `trial_minutes_done`.
+1. `Bot.gate` creates or reads the user through `Storage.GetOrCreateUser`.
+2. Until `consent_at != NULL` the gate lets through only `/start`, `/help`, consent callbacks and payment updates.
+3. `Bot.onText` looks for a meeting URL, validates the supported host and calls `Storage.CreateJob`.
+4. In one transaction `CreateJob` locks the user row, checks same-URL dedup and the active cap of 4, reserves up to 60 minutes from the paid quota or the trial and inserts `jobs(status=created, provider=activeProvider, reserved_minutes=...)`.
+5. `tg.go` sends a status message and saves `status_message_id`.
+6. `Orchestrator.tickOnce` claims jobs through `Storage.ClaimJobsForWork`.
+7. `advance(created)` calls `submitJob`: `provider.Submit`, then `SetJobSubmitted(created -> joining)`.
+8. `advance(joining|recording|processing)` calls `pollJob`: `provider.Poll` and moves the phase to `recording`, `processing`, `done` or `failed`.
+9. On `StatusDone` `finishTranscription` calls `provider.Fetch`.
+10. If `SUMMARIZER_PROVIDER=off`, the transcript is delivered through `TelegramDelivery.Deliver`, then `SetJobDone`.
+11. If the provider returned `Result.SummaryMarkdown`, the summary is cached and delivered together with the transcript as one Telegram media group of two files, then `SetJobDone`.
+12. If the summarizer is enabled, `SetJobSummarizing`, then `summarizeJob`: fetch transcript, `Summarizer.Summarize`, cache `summary_md`, deliver one grouped Telegram media set with `summary_*.md` and `transcript_*.md`, `SetJobDone`.
+13. If `Summarizer.Summarize` failed, `summarizeJob` delivers a transcript-only file and moves the Job to `failed_summary`.
+14. `SetJobDone` atomically closes the Job, finalizes `billed_minutes` by duration and, for the trial, increases `trial_minutes_done`.
 
-## 7. State machine `Job`
+## 7. `Job` state machine
 
-Текущий реализованный граф:
+The currently implemented graph:
 
 ```text
 created -> joining -> recording -> processing -> summarizing -> done
    |         |          |            |              |
    +---------+----------+------------+--------------+-> failed
                                       |
-                                      +-> failed_summary (только из summarizing)
+                                      +-> failed_summary (only from summarizing)
 ```
 
-Финальные статусы в Go-коде: `done`, `failed`, `failed_summary`.
+Final statuses in the Go code: `done`, `failed`, `failed_summary`.
 
-Допустимые сокращения:
+Allowed shortcuts:
 
-- Speech2Text может идти `joining -> recording -> processing -> done`, если после `on_call` снова приходит `pending`/очередь: это observable сигнал, что бот вышел и запись ушла в обработку. Если `processing` уже зафиксировал observable window, terminal billing использует сохранённый `duration_seconds`; `Result.DurationSeconds` от provider используется только как fallback для прямого terminal result без записанного окна, затем fallback 3600s.
-- mymeet/provider-summary может идти из активной фазы сразу в `done`, минуя `summarizing`.
-- `SUMMARIZER_PROVIDER=off` закрывает Job сразу после доставки transcript.
+- Speech2Text may go `joining -> recording -> processing -> done` if after `on_call` `pending`/queue arrives again: this is an observable signal that the bot left and the recording went to processing. If `processing` has already fixed an observable window, terminal billing uses the saved `duration_seconds`; `Result.DurationSeconds` from the provider is used only as a fallback for a direct terminal result without a recorded window, then the 3600s fallback.
+- mymeet/provider-summary may go from an active phase straight to `done`, skipping `summarizing`.
+- `SUMMARIZER_PROVIDER=off` closes the Job right after the transcript is delivered.
 
-Критические guards:
+Critical guards:
 
-- `SetJobSubmitted` - только `created`; если запись уже не `created`, orchestrator делает best-effort `Cancel`.
-- `SetJobRecording` - только `joining`.
-- `SetJobProcessing` - `joining|recording`; при входе из `recording` фиксирует `recording_finished_at` и `duration_seconds`.
-- `SetJobDone` - `joining|recording|processing|summarizing`, чтобы покрыть дискретный polling и provider-summary.
-- `FailJobWithQuotaRefund` - только `created|joining|recording|processing`; `summarizing` не рефандится, потому что transcript уже доставлен.
-- `SetJobFailedSummary` - отдельный финал без quota refund.
+- `SetJobSubmitted` - only `created`; if the record is no longer `created`, the orchestrator does a best-effort `Cancel`.
+- `SetJobRecording` - only `joining`.
+- `SetJobProcessing` - `joining|recording`; on entry from `recording` it records `recording_finished_at` and `duration_seconds`.
+- `SetJobDone` - `joining|recording|processing|summarizing`, to cover discrete polling and provider-summary.
+- `FailJobWithQuotaRefund` - only `created|joining|recording|processing`; `summarizing` is not refunded, because the transcript has already been delivered.
+- `SetJobFailedSummary` - a separate final state without a quota refund.
 
-`transcribed`, `failed_join`, `awaiting_reauth` могут встречаться в исторических SQL CHECK/доках как target/dormant values, но не являются рабочим путем release 0.1.
+`transcribed`, `failed_join`, `awaiting_reauth` may appear in historical SQL CHECKs/docs as target/dormant values, but are not a working path of release 0.1.
 
-## 8. Критические алгоритмы
+## 8. Critical algorithms
 
-### 8.1. Создание Job и резерв квоты
+### 8.1. Job creation and quota reserve
 
-Функция: `Storage.CreateJob(ctx, userID, meetingURL, provider, trialLimitMinutes)`.
+Function: `Storage.CreateJob(ctx, userID, meetingURL, provider, trialLimitMinutes)`.
 
-Алгоритм:
+Algorithm:
 
-1. Начать транзакцию.
-2. Заблокировать строку пользователя `SELECT ... FOR UPDATE`.
-3. Проверить активный Job с тем же `meeting_url`. Если есть - `ErrDuplicateActiveJob`.
-4. Посчитать активные jobs пользователя. Если `>= 4` - `ErrTooManyActiveJobs`.
-5. Попробовать зарезервировать `min(60, minutes_balance)` из ближайшей активной подписки с `minutes_balance > 0`.
-6. Если подписки нет, атомарно зарезервировать `min(60, trialLimitMinutes - trial_minutes_used)` из trial.
-7. Если квоты нет - `ErrNoQuota`.
-8. Вставить `jobs(status=created, provider=...)`.
-9. Если insert упал на `jobs_active_dedup_idx`, вернуть `ErrDuplicateActiveJob`; транзакция откатит резерв.
+1. Begin a transaction.
+2. Lock the user row with `SELECT ... FOR UPDATE`.
+3. Check for an active Job with the same `meeting_url`. If there is one: `ErrDuplicateActiveJob`.
+4. Count the user's active jobs. If `>= 4`: `ErrTooManyActiveJobs`.
+5. Try to reserve `min(60, minutes_balance)` from the nearest active subscription with `minutes_balance > 0`.
+6. If there is no subscription, atomically reserve `min(60, trialLimitMinutes - trial_minutes_used)` from the trial.
+7. If there is no quota: `ErrNoQuota`.
+8. Insert `jobs(status=created, provider=...)`.
+9. If the insert fails on `jobs_active_dedup_idx`, return `ErrDuplicateActiveJob`; the transaction rolls back the reserve.
 10. Commit.
 
-Почему резерв на создании, а не только в `done`: два сообщения за короткое время не могут оба пройти `WHERE minutes_balance > 0` или `trial_minutes_used < limit`.
+Why reserve at creation and not only at `done`: two messages in a short time cannot both pass `WHERE minutes_balance > 0` or `trial_minutes_used < limit`.
 
-### 8.2. Worker claim и polling
+### 8.2. Worker claim and polling
 
-Функции: `Storage.ClaimJobsForWork`, `Orchestrator.tickOnce`, `advance`, `submitJob`, `pollJob`.
+Functions: `Storage.ClaimJobsForWork`, `Orchestrator.tickOnce`, `advance`, `submitJob`, `pollJob`.
 
-Алгоритм:
+Algorithm:
 
-1. Claim выбирает `created` и активные jobs, которые давно не обновлялись.
-2. `FOR UPDATE SKIP LOCKED` защищает от двойного claim внутри SQL statement.
-3. `updated_at` bump в claim служит простым backoff между poll-тика.
-4. В текущем runtime предполагается один worker в одном процессе; multi-instance потребует отдельного atomic-claim слайса.
-5. Для `created` сначала проверяется `JOB_START_TIMEOUT_MINUTES`; timeout переводит Job в `failed` с возвратом квоты без вызова provider.
-6. `created` отправляется поставщику через `Submit`.
-7. Ошибка `Submit` увеличивает in-memory `submitAttempts`; permanent HTTP-коды `400|401|402|403|404|409` фейлят Job сразу, прочие ошибки ретраятся до `JOB_SUBMIT_MAX_ATTEMPTS`.
-8. `joining|recording|processing` поллятся через `Poll`.
-9. Для `joining` тот же `JOB_START_TIMEOUT_MINUTES` проверяется до `Poll`; timeout делает best-effort `Cancel`, затем `failed` с возвратом квоты.
-10. `maxJobAge` останавливает только зависшую `recording`-встречу: ставит marker `last_error='watchdog_stop'`, вызывает `Cancel`, переводит Job в `processing` и ждёт transcript. `processing` по `created_at` больше не фейлится: бот уже вышел, provider готовит результат.
-11. Если после stop provider возвращает `StatusFailed`, worker пробует `Fetch` только при marker `manual_stop|watchdog_stop`; непустой transcript идёт в обычный billable result path, `ErrEmptyTranscript`/fetch-fail — в `failed` с возвратом квоты.
+1. Claim selects `created` and active jobs that have not been updated for a while.
+2. `FOR UPDATE SKIP LOCKED` protects against a double claim within an SQL statement.
+3. The `updated_at` bump in claim serves as a simple backoff between poll ticks.
+4. The current runtime assumes a single worker in a single process; multi-instance will need a separate atomic-claim slice.
+5. For `created`, `JOB_START_TIMEOUT_MINUTES` is checked first; on timeout the Job goes to `failed` with a quota refund without calling the provider.
+6. `created` is sent to the provider through `Submit`.
+7. A `Submit` error increments the in-memory `submitAttempts`; permanent HTTP codes `400|401|402|403|404|409` fail the Job immediately, other errors are retried up to `JOB_SUBMIT_MAX_ATTEMPTS`.
+8. `joining|recording|processing` are polled through `Poll`.
+9. For `joining` the same `JOB_START_TIMEOUT_MINUTES` is checked before `Poll`; on timeout it does a best-effort `Cancel`, then `failed` with a quota refund.
+10. `maxJobAge` stops only a stuck `recording` meeting: it sets the marker `last_error='watchdog_stop'`, calls `Cancel`, moves the Job to `processing` and waits for the transcript. `processing` is no longer failed by `created_at`: the bot has already left, the provider is preparing the result.
+11. If after stop the provider returns `StatusFailed`, the worker tries `Fetch` only with the marker `manual_stop|watchdog_stop`; a non-empty transcript goes to the normal billable result path, `ErrEmptyTranscript`/fetch failure go to `failed` with a quota refund.
 
 ### 8.3. Empty transcript
 
-Если provider возвращает `ErrEmptyTranscript`, orchestrator переводит Job в `failed` через `FailJobWithQuotaRefund`. Summary не запускается, quota возвращается. Это нужно для пустых или технически бесполезных встреч: пользователь не должен терять встречу из лимита.
+If the provider returns `ErrEmptyTranscript`, the orchestrator moves the Job to `failed` through `FailJobWithQuotaRefund`. The summary does not start, the quota is returned. This is for empty or technically useless meetings: the user must not lose the meeting from the limit.
 
 ### 8.4. Summary path
 
-Функции: `finishTranscription`, `summarizeJob`, `SetJobSummary`, `SetTerminalJobSummary`, `SetJobDone`, `SetJobFailedSummary`.
+Functions: `finishTranscription`, `summarizeJob`, `SetJobSummary`, `SetTerminalJobSummary`, `SetJobDone`, `SetJobFailedSummary`.
 
-Алгоритм:
+Algorithm:
 
-1. Transcript доставляется сразу только при `SUMMARIZER_PROVIDER=off`.
-2. Provider-summary, если есть, кэшируется в `summary_md`, доставляется одним файлом вместе с transcript и закрывает Job.
-3. При нашем summarizer Job переводится в `summarizing`.
-4. `summarizeJob` сначала проверяет `job.SummaryMD`.
-5. Если summary нет, делает `Fetch`, вызывает `Summarizer.Summarize`, кэширует summary до доставки.
-6. Если delivery итогового файла временно упал, следующий тик берет summary из кэша и не повторяет платный LLM-вызов.
-7. Ошибка генерации summary доставляет transcript-only файл и ведет в `failed_summary` без раннего quota refund; terminal billing считает встречу оказанной услугой по сохранённой duration, а при отсутствии сохранённой duration берёт provider duration/fallback.
-8. Кнопка «Получить конспект» в «Мои звонки» для terminal Job без `summary_md` пробует заново получить transcript у provider, восстановить summary и сохранить его через `SetTerminalJobSummary`; для `failed_summary` успешное восстановление переводит статус в `done` без повторного billing.
+1. The transcript is delivered immediately only with `SUMMARIZER_PROVIDER=off`.
+2. A provider-summary, if present, is cached in `summary_md`, delivered as one file together with the transcript and closes the Job.
+3. With our summarizer the Job moves to `summarizing`.
+4. `summarizeJob` first checks `job.SummaryMD`.
+5. If there is no summary, it does `Fetch`, calls `Summarizer.Summarize` and caches the summary before delivery.
+6. If delivery of the final file temporarily failed, the next tick takes the summary from the cache and does not repeat the paid LLM call.
+7. A summary generation error delivers a transcript-only file and leads to `failed_summary` without an early quota refund; terminal billing counts the meeting as a delivered service by the saved duration, and without a saved duration it takes the provider duration/fallback.
+8. The "Получить конспект" ("Get summary") button in "My calls" for a terminal Job without `summary_md` tries to fetch the transcript from the provider again, restore the summary and save it through `SetTerminalJobSummary`; for `failed_summary` a successful restore moves the status to `done` without repeated billing.
 
 ### 8.5. Payment path
 
-Функции: `Billing.CreatePayment`, `Billing.CreateRecurringPayment`, `Billing.GetPayment`, `Storage.CreatePendingPayment`, `Storage.FinalizeYookassaPayment`, `Storage.FailYookassaPayment`, `PaymentPoller.Run`, `RecurringWorker.Run`.
+Functions: `Billing.CreatePayment`, `Billing.CreateRecurringPayment`, `Billing.GetPayment`, `Storage.CreatePendingPayment`, `Storage.FinalizeYookassaPayment`, `Storage.FailYookassaPayment`, `PaymentPoller.Run`, `RecurringWorker.Run`.
 
-Алгоритм:
+Algorithm:
 
-1. Пользователь нажимает оплату; `tg.go` берёт сохранённый `payment_email` или просит email для чека.
-2. `CreatePayment` вызывает `POST /v3/payments` с `Idempotence-Key`, `confirmation.type=redirect`, `capture=true`, `receipt` и `metadata.user_id`; при `RECURRING_PAYMENTS_ENABLED=true` добавляет `save_payment_method:"true"` и `metadata.auto_renew=true`.
-3. `CreatePendingPayment` сохраняет `payments.status='pending'`, `provider_payment_charge_id=payment.id`, `payment_intent_key`.
-4. Бот отправляет пользователю кнопку на `confirmation.confirmation_url`.
-5. `PaymentPoller` проверяет `GET /v3/payments/{id}`.
-6. При `succeeded && paid=true` сверяет provider id, сумму, currency и metadata user id, затем `FinalizeYookassaPayment` создаёт отдельную строку `subscriptions`; для `metadata.auto_renew=true` + `payment_method.saved=true` сохраняет `payment_method_id` и upsert'ит `recurring_profiles`.
-7. `expires_at` каждой новой строки независим: `now()+30 days`; старая строка и её остаток не меняются. Для recurring дата следующего списания равна effective expiry пользователя (`MAX(expires_at)` активных строк), поэтому совпадает с `/balance`.
-8. При `RECURRING_PAYMENTS_ENABLED=true` `RecurringWorker` выбирает due `active|charge_failed`, а `StartRecurringPaymentIntent` атомарно переводит профиль в `charging` и создаёт локальный pending intent до внешнего POST.
-9. При `canceled && paid=false` `FailYookassaPayment` закрывает pending без подписки; для recurring payment временная причина становится `charge_failed` с retry через 24 часа, revoked/mandate причина становится `blocked`. `/balance` показывает статус автопродления; «Отключить автопродление» переводит профиль в `disabled` и очищает `payment_method_id`, а «Обновить подписку» запускает обычную оплату нового периода.
+1. The user taps pay; `tg.go` takes the saved `payment_email` or asks for an email for the receipt.
+2. `CreatePayment` calls `POST /v3/payments` with `Idempotence-Key`, `confirmation.type=redirect`, `capture=true`, `receipt` and `metadata.user_id`; with `RECURRING_PAYMENTS_ENABLED=true` it adds `save_payment_method:"true"` and `metadata.auto_renew=true`.
+3. `CreatePendingPayment` saves `payments.status='pending'`, `provider_payment_charge_id=payment.id`, `payment_intent_key`.
+4. The bot sends the user a button to `confirmation.confirmation_url`.
+5. `PaymentPoller` checks `GET /v3/payments/{id}`.
+6. On `succeeded && paid=true` it reconciles the provider id, amount, currency and metadata user id, then `FinalizeYookassaPayment` creates a separate `subscriptions` row; for `metadata.auto_renew=true` + `payment_method.saved=true` it saves `payment_method_id` and upserts `recurring_profiles`.
+7. The `expires_at` of each new row is independent: `now()+30 days`; the old row and its remainder do not change. For recurring, the next charge date equals the user's effective expiry (`MAX(expires_at)` of active rows), so it matches `/balance`.
+8. With `RECURRING_PAYMENTS_ENABLED=true`, `RecurringWorker` selects due `active|charge_failed`, and `StartRecurringPaymentIntent` atomically moves the profile to `charging` and creates a local pending intent before the external POST.
+9. On `canceled && paid=false`, `FailYookassaPayment` closes the pending payment without a subscription; for a recurring payment a temporary reason becomes `charge_failed` with a retry in 24 hours, a revoked/mandate reason becomes `blocked`. `/balance` shows the auto-renewal status; "Отключить автопродление" ("Disable auto-renewal") moves the profile to `disabled` and clears `payment_method_id`, and "Обновить подписку" ("Renew subscription") starts a normal payment for a new period.
 
 ### 8.6. Refund path
 
-Функции: `Storage.BeginRefund`, `Billing.CreateRefund`, `Storage.FinalizeRefund`.
+Functions: `Storage.BeginRefund`, `Billing.CreateRefund`, `Storage.FinalizeRefund`.
 
-Алгоритм:
+Algorithm:
 
-1. `BeginRefund` находит refundable payment, создает или возвращает pending refund intent и idempotence key.
-2. `CreateRefund` делает REST-запрос в ЮKassa с `Idempotence-Key`.
-3. `FinalizeRefund` фиксирует статус provider'а.
-4. При succeeded refund платеж становится `refunded`, связанная подписка деактивируется, `recurring_profiles` пользователя переводится в `disabled`.
+1. `BeginRefund` finds a refundable payment, creates or returns a pending refund intent and the idempotence key.
+2. `CreateRefund` makes a REST request to YooKassa with `Idempotence-Key`.
+3. `FinalizeRefund` records the provider's status.
+4. On a succeeded refund the payment becomes `refunded`, the related subscription is deactivated, the user's `recurring_profiles` moves to `disabled`.
 
-MVP поддерживает только полный refund. Критические события payment/refund/recurring пишутся в structured logs: `payment_poll_finalized`, `payment_poll_recurring_failure_marked`, `recurring_worker_started`, `recurring_provider_payment_created`, `recurring_provider_payment_attached`, `recurring_intent_blocked`, `refund_finalized`.
+The MVP supports only a full refund. Critical payment/refund/recurring events are written to structured logs: `payment_poll_finalized`, `payment_poll_recurring_failure_marked`, `recurring_worker_started`, `recurring_provider_payment_created`, `recurring_provider_payment_attached`, `recurring_intent_blocked`, `refund_finalized`.
 
-### 8.7. Cancel и повторная выдача
+### 8.7. Cancel and re-delivery
 
-`tg.go` через панель «Мои звонки» дает:
+Through the "My calls" panel `tg.go` provides:
 
-- открыть карточку Job;
-- отменить `created|joining` Job с возвратом резерва;
-- остановить запись `recording` Job и дождаться transcript;
-- повторно получить transcript;
-- повторно получить summary из `summary_md`, а если его нет у `done|failed_summary` — попробовать восстановить summary из provider transcript.
+- open a Job card;
+- cancel a `created|joining` Job with a reserve refund;
+- stop the recording of a `recording` Job and wait for the transcript;
+- get the transcript again;
+- get the summary again from `summary_md`, and if it is missing for `done|failed_summary`, try to restore the summary from the provider transcript.
 
-`created|joining` отменяются старым no-result path: owner check, `failed`, quota refund, best-effort `provider.Cancel`, если внешний id уже есть. Для `recording` кнопка означает «остановить запись»: owner check ставит marker `last_error='manual_stop'`, `provider.Cancel` останавливает бота, затем Job переводится в `processing`; если provider потом отдаёт transcript, встреча считается оказанной услугой и terminal billing списывает фактическую duration. Если transcript пустой или результат получить нельзя, Job идёт в `failed` с quota refund. `processing|summarizing` в UI не имеют stop/cancel-кнопки: результат уже готовится. У mymeet `Cancel` деградирован: внешний бот может не остановиться, поэтому при ошибке stop локальная джоба закрывается no-result path с возвратом квоты.
+`created|joining` are cancelled by the old no-result path: owner check, `failed`, quota refund, best-effort `provider.Cancel` if an external id already exists. For `recording` the button means "stop recording": the owner check sets the marker `last_error='manual_stop'`, `provider.Cancel` stops the bot, then the Job moves to `processing`; if the provider later returns a transcript, the meeting counts as a delivered service and terminal billing charges the actual duration. If the transcript is empty or the result cannot be obtained, the Job goes to `failed` with a quota refund. `processing|summarizing` have no stop/cancel button in the UI: the result is already being prepared. For mymeet `Cancel` is degraded: the external bot may not stop, so on a stop error the local job is closed by the no-result path with a quota refund.
 
 ### 8.8. F9 notifier
 
-`Notifier` раз в час ищет:
+Once an hour `Notifier` looks for:
 
-- trial почти исчерпан;
-- пользователь смотрел/запрашивал оплату больше 24 часов назад, но не оплатил;
-- платных часов осталось меньше 60 минут;
-- платные часы закончились до календарного истечения подписки;
-- подписка истекает через 3 дня;
-- подписка истекла.
+- the trial is almost used up;
+- the user viewed/requested payment more than 24 hours ago but did not pay;
+- less than 60 minutes of paid hours left;
+- paid hours ran out before the calendar expiry of the subscription;
+- the subscription expires in 3 days;
+- the subscription expired.
 
-Инвариант: сначала отправить сообщение, потом поставить mark. Legacy trial/sub-expiring/sub-expired дедупятся через `users.notified_*_at`, а `notified_*_at` + `analytics_events.nudge_sent` пишутся одной транзакцией; новые классы дедупятся через `analytics_events.nudge_sent`. Если отправка упала, mark не пишется и пуш повторится. Если mark упал после успешной отправки, возможен дубль, но не потеря уведомления.
+Invariant: send the message first, then set the mark. Legacy trial/sub-expiring/sub-expired are deduplicated through `users.notified_*_at`, and `notified_*_at` + `analytics_events.nudge_sent` are written in one transaction; new classes are deduplicated through `analytics_events.nudge_sent`. If sending failed, the mark is not written and the push repeats. If the mark failed after a successful send, a duplicate is possible, but no notification is lost.
 
-Подписочные дожимы взаимоисключаются: `sub_low_balance` имеет приоритет над `sub_expiring`, чтобы один тик не отправлял два сообщения одному пользователю. `sub_low_balance` и `sub_empty_balance` не выбирают пользователя, пока есть активная платная Job с `reserved_minutes > 0`: до terminal billing баланс может быть временно уменьшен часовым резервом.
+Subscription nudges are mutually exclusive: `sub_low_balance` takes priority over `sub_expiring`, so one tick does not send two messages to one user. `sub_low_balance` and `sub_empty_balance` do not select a user while there is an active paid Job with `reserved_minutes > 0`: until terminal billing the balance may be temporarily reduced by the hourly reserve.
 
 ## 9. Provider boundary
 
@@ -328,22 +328,22 @@ Fetch(ctx context.Context, externalJobID string) (Result, error)
 Cancel(ctx context.Context, externalJobID string) error
 ```
 
-Смысл интерфейса практический: provider'ы реально менялись по надежности и экономике, а state machine должна оставаться той же.
+The meaning of the interface is practical: providers did change in reliability and economics, and the state machine must stay the same.
 
-`ProviderStatus` маппится в доменные фазы:
+`ProviderStatus` maps to domain phases:
 
-- `StatusPending` - остаемся в `joining`;
+- `StatusPending` - stay in `joining`;
 - `StatusOnCall` - `recording`;
 - `StatusTranscribing` - `processing`;
 - `StatusDone` - `finishTranscription`;
-- `StatusFailed` - `failed` с quota refund; при stop-marker сначала `Fetch`, и непустой transcript идёт в billable result path;
-- `StatusPaused` - ожидание/лог, без смены статуса.
+- `StatusFailed` - `failed` with a quota refund; with a stop marker, `Fetch` first, and a non-empty transcript goes to the billable result path;
+- `StatusPaused` - wait/log, no status change.
 
-Особенности provider'ов:
+Provider specifics:
 
-- Speech2Text: `join`, `recognitions/{id}`, `result/txt`, `result/json`; пустой transcript - `ErrEmptyTranscript`.
-- mymeet: `record-meeting`, `meeting/status`, `video/report`; может вернуть provider-summary; `Cancel` не останавливает внешнего бота.
-- mock: deterministic provider для dev/test.
+- Speech2Text: `join`, `recognitions/{id}`, `result/txt`, `result/json`; an empty transcript is `ErrEmptyTranscript`.
+- mymeet: `record-meeting`, `meeting/status`, `video/report`; may return a provider-summary; `Cancel` does not stop the external bot.
+- mock: a deterministic provider for dev/test.
 
 ## 10. Summarizer boundary
 
@@ -355,15 +355,15 @@ Summarize(ctx context.Context, transcript string) (string, error)
 
 OpenRouter path:
 
-1. Пустой transcript отклоняется.
-2. Короткий transcript идет одним chat completion.
-3. Длинный transcript режется по строкам на chunks до `maxChunkChars`.
-4. Для chunks выполняется map stage.
-5. Затем reduce stage собирает итоговое summary.
-6. Каждый chat-шаг имеет bounded retry для transient OpenRouter/provider ошибок; при map-reduce повторяется только упавший шаг, уже успешные chunks не пересчитываются.
-7. Ответ валидируется: пустой content считается ошибкой.
+1. An empty transcript is rejected.
+2. A short transcript goes in a single chat completion.
+3. A long transcript is split by lines into chunks up to `maxChunkChars`.
+4. A map stage runs over the chunks.
+5. Then a reduce stage assembles the final summary.
+6. Each chat step has a bounded retry for transient OpenRouter/provider errors; in map-reduce only the failed step is repeated, already successful chunks are not recomputed.
+7. The response is validated: empty content counts as an error.
 
-Provider-summary имеет приоритет над `Summarizer`: если `Fetch` принес `SummaryMarkdown`, OpenRouter не вызывается.
+A provider-summary has priority over `Summarizer`: if `Fetch` brought `SummaryMarkdown`, OpenRouter is not called.
 
 ## 11. Delivery boundary
 
@@ -373,15 +373,15 @@ Provider-summary имеет приоритет над `Summarizer`: если `Fe
 Deliver(ctx context.Context, chatID int64, filename, caption string, content []byte) error
 ```
 
-Release 0.1 реализация одна - `TelegramDelivery`. Она отправляет `.md` как Telegram document.
+Release 0.1 has a single implementation, `TelegramDelivery`. It sends `.md` as a Telegram document.
 
-Известное окно дубля: если процесс падает после успешного `Deliver`, но до записи нового статуса в БД, следующий тик может отправить файл повторно. Частично это снижено `context.WithoutCancel` после необратимых действий, но crash-window остается осознанным runtime limit.
+Known duplicate window: if the process crashes after a successful `Deliver` but before the new status is written to the DB, the next tick may send the file again. This is partially reduced by `context.WithoutCancel` after irreversible actions, but the crash window remains a deliberate runtime limit.
 
-## 12. Логи и диагностика
+## 12. Logs and diagnostics
 
-Логи идут через `slog` JSON в stdout, на сервере собираются journald. Канон инфраструктурной наблюдаемости - `docs/deployment.md`.
+Logs go through `slog` JSON to stdout and are collected by journald on the server. The canon for infrastructure observability is `docs/deployment.md`.
 
-Ключевые поля, которые реально используются в коде:
+Key fields actually used in the code:
 
 - `event`;
 - `phase`;
@@ -394,49 +394,49 @@ Release 0.1 реализация одна - `TelegramDelivery`. Она отпр�
 - `document`;
 - `err`.
 
-Для разбора Job нужен поиск по `job_id`; для provider-проблем - по `provider`, `external_job_id`, `event`.
+To investigate a Job, search by `job_id`; for provider problems, by `provider`, `external_job_id`, `event`.
 
-## 13. Текущие runtime limits
+## 13. Current runtime limits
 
-Эти пункты не являются реализованной функциональностью, даже если рядом есть поля или исторические заметки:
+These items are not implemented functionality, even if there are fields or historical notes nearby:
 
-- startup orphan recovery отдельной процедурой не реализован;
-- `retry_count` и экспоненциальная пауза не используются как алгоритм retry, вместо этого работает claim/backoff через `updated_at`;
-- graceful shutdown отменяет context и останавливает Telegram long polling, но не делает явный drain всех текущих операций;
-- multi-instance worker не поддержан как гарантия, потому что после commit `created` job может снова стать claimable до `SetJobSubmitted`;
-- mymeet `Cancel` не останавливает внешнего бота;
-- delivery duplicate windows остаются;
-- Google delivery/OAuth/`awaiting_reauth` отсутствуют в текущем Go-коде.
+- a separate startup orphan recovery procedure is not implemented;
+- `retry_count` and exponential pause are not used as a retry algorithm, claim/backoff through `updated_at` works instead;
+- graceful shutdown cancels the context and stops Telegram long polling, but does not explicitly drain all current operations;
+- multi-instance worker is not supported as a guarantee, because after commit a `created` job may become claimable again before `SetJobSubmitted`;
+- mymeet `Cancel` does not stop the external bot;
+- delivery duplicate windows remain;
+- Google delivery/OAuth/`awaiting_reauth` are absent from the current Go code.
 
 ## 14. Post-0.1 Google delivery
 
-Google Drive delivery остается отдельным будущим срезом. Целевой состав:
+Google Drive delivery remains a separate future slice. The target composition:
 
 - `google.go` - OAuth 2.0, refresh token, Drive upload/convert;
 - `web.go` - `/oauth/google/callback`;
-- `google_delivery.go` - вторая реализация `DocumentDelivery`;
-- `/reconnect` - восстановление доступа;
-- `awaiting_reauth` + `reauth_from` - пауза Job при 401/invalid refresh и возобновление после OAuth callback.
+- `google_delivery.go` - the second implementation of `DocumentDelivery`;
+- `/reconnect` - access recovery;
+- `awaiting_reauth` + `reauth_from` - pausing a Job on 401/invalid refresh and resuming after the OAuth callback.
 
-Причина держать это отдельно: release 0.1 уже работает через Telegram delivery, а Google меняет схему БД, runtime-состав, delivery semantics и failure model.
+Why keep this separate: release 0.1 already works through Telegram delivery, and Google changes the DB schema, the runtime composition, the delivery semantics and the failure model.
 
 ## 15. Out of scope release 0.1
 
-- Веб-интерфейс, личный кабинет, мобильное приложение.
+- Web interface, personal account, mobile app.
 - Google Docs delivery.
-- Автоподключение из календаря.
-- Редактирование транскрипта внутри сервиса.
-- AI-чат по встрече.
-- Несколько тарифов.
-- Автоматические частичные refund'ы; ручной законный возврат по заявлению пользователя обрабатывается отдельно по оферте.
-- Динамический runtime routing между provider'ами.
+- Auto-join from a calendar.
+- Editing the transcript inside the service.
+- AI chat about a meeting.
+- Multiple tariffs.
+- Automatic partial refunds; a manual lawful refund at the user's request is handled separately under the offer.
+- Dynamic runtime routing between providers.
 - Multi-instance worker.
-- Собственное хранение аудио или готовых документов.
+- Own storage of audio or finished documents.
 
-## 16. Где читать детали
+## 16. Where to read details
 
-- Продуктовые требования и roadmap - `docs/product.md`.
-- БД, индексы, SQL-паттерны - `docs/db.md`.
-- Платежи и ЮKassa - `docs/payments.md`.
-- Инфраструктура и deploy - `docs/deployment.md`, `deploy/README.md`.
-- Provider-контракты - `docs/api/speech2text/`, `docs/api/mymeet/`, `docs/api/openrouter/`.
+- Product requirements and roadmap - `docs/product.md`.
+- DB, indexes, SQL patterns - `docs/db.md`.
+- Payments and YooKassa - `docs/payments.md`.
+- Infrastructure and deploy - `docs/deployment.md`, `deploy/README.md`.
+- Provider contracts - `docs/api/speech2text/`, `docs/api/mymeet/`, `docs/api/openrouter/`.

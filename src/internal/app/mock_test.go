@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestMockProvider_HappyPath проверяет сценарий Submit -> Poll (до Done) -> Fetch.
+// TestMockProvider_HappyPath covers the Submit -> Poll (until Done) -> Fetch scenario.
 func TestMockProvider_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	job := Job{ID: 42, MeetingURL: "https://meet.google.com/abc-def"}
@@ -19,27 +19,27 @@ func TestMockProvider_HappyPath(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 	if extID == "" {
-		t.Fatal("Submit: пустой externalJobID")
+		t.Fatal("Submit: empty externalJobID")
 	}
 
-	// Первые DoneAfterPolls вызовов — Pending
+	// The first DoneAfterPolls calls return Pending
 	for i := range p.DoneAfterPolls {
 		status, err := p.Poll(ctx, extID)
 		if err != nil {
 			t.Fatalf("Poll %d: %v", i+1, err)
 		}
 		if status != StatusPending {
-			t.Fatalf("Poll %d: ожидали StatusPending, получили %d", i+1, status)
+			t.Fatalf("Poll %d: want StatusPending, got %d", i+1, status)
 		}
 	}
 
-	// Следующий вызов — Done
+	// The next call returns Done
 	status, err := p.Poll(ctx, extID)
 	if err != nil {
 		t.Fatalf("Poll (done): %v", err)
 	}
 	if status != StatusDone {
-		t.Fatalf("Poll (done): ожидали StatusDone, получили %d", status)
+		t.Fatalf("Poll (done): want StatusDone, got %d", status)
 	}
 
 	// Fetch
@@ -48,17 +48,17 @@ func TestMockProvider_HappyPath(t *testing.T) {
 		t.Fatalf("Fetch: %v", err)
 	}
 	if result.TranscriptMarkdown == "" {
-		t.Fatal("Fetch: пустой TranscriptMarkdown")
+		t.Fatal("Fetch: empty TranscriptMarkdown")
 	}
 
-	// Raw — валидный JSON (требование колонки JSONB)
+	// Raw is valid JSON (JSONB column requirement)
 	if !json.Valid(result.Raw) {
-		t.Fatalf("Fetch: Raw не является валидным JSON: %s", result.Raw)
+		t.Fatalf("Fetch: Raw is not valid JSON: %s", result.Raw)
 	}
 }
 
-// TestMockProvider_PerJobPollCounters — счётчики Poll независимы по externalJobID:
-// прогресс одной джобы не двигает другую (единственная stateful-логика мока).
+// TestMockProvider_PerJobPollCounters: Poll counters are independent per externalJobID,
+// so progress of one job does not move another (the only stateful logic of the mock).
 func TestMockProvider_PerJobPollCounters(t *testing.T) {
 	ctx := context.Background()
 	p := &MockProvider{DoneAfterPolls: 1}
@@ -67,25 +67,25 @@ func TestMockProvider_PerJobPollCounters(t *testing.T) {
 		extID string
 		want  ProviderStatus
 	}{
-		{"a", StatusPending}, // a: первый Poll
-		{"b", StatusPending}, // b: свой первый Poll, счётчик a не влияет
-		{"a", StatusDone},    // a: второй Poll
-		{"b", StatusDone},    // b: второй Poll, независимо от a
+		{"a", StatusPending}, // a: first Poll
+		{"b", StatusPending}, // b: its own first Poll, a's counter has no effect
+		{"a", StatusDone},    // a: second Poll
+		{"b", StatusDone},    // b: second Poll, independent of a
 	}
 	for i, step := range steps {
 		status, err := p.Poll(ctx, step.extID)
 		if err != nil {
-			t.Fatalf("шаг %d (%s): %v", i+1, step.extID, err)
+			t.Fatalf("step %d (%s): %v", i+1, step.extID, err)
 		}
 		if status != step.want {
-			t.Fatalf("шаг %d (%s): статус %d, ожидали %d", i+1, step.extID, status, step.want)
+			t.Fatalf("step %d (%s): status %d, want %d", i+1, step.extID, status, step.want)
 		}
 	}
 }
 
-// TestMockProvider_Phased — режим Phased проводит джобу по фазам провайдера
-// OnCall -> Transcribing -> Done (по одному Poll на фазу), затем держит Done.
-// Нужен для теста полного потока orchestrator joining -> recording -> processing -> done.
+// TestMockProvider_Phased: Phased mode walks a job through the provider phases
+// OnCall -> Transcribing -> Done (one Poll per phase), then stays in Done.
+// Needed for the full orchestrator flow test joining -> recording -> processing -> done.
 func TestMockProvider_Phased(t *testing.T) {
 	ctx := context.Background()
 	p := &MockProvider{Phased: true}
@@ -102,14 +102,14 @@ func TestMockProvider_Phased(t *testing.T) {
 			t.Fatalf("Poll %d: %v", i+1, err)
 		}
 		if status != w {
-			t.Fatalf("Poll %d: статус %d, ожидали %d", i+1, status, w)
+			t.Fatalf("Poll %d: status %d, want %d", i+1, status, w)
 		}
 	}
 }
 
-// TestMockProvider_FailMode — контракт режима отказа фикстуры (FailOnPoll=true):
-// единственный оставленный unit на «фейк умеет упасть по команде». Симметричный
-// MockSummarizer.FailOnSummarize покрыт E2E через TestSummarizeJob_FailSummarize.
+// TestMockProvider_FailMode: contract of the fixture failure mode (FailOnPoll=true).
+// It is the only remaining unit test for "the fake can fail on demand". The symmetric
+// MockSummarizer.FailOnSummarize is covered E2E by TestSummarizeJob_FailSummarize.
 func TestMockProvider_FailMode(t *testing.T) {
 	ctx := context.Background()
 	job := Job{ID: 7}
@@ -126,6 +126,6 @@ func TestMockProvider_FailMode(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 	if status != StatusFailed {
-		t.Fatalf("Poll: ожидали StatusFailed, получили %d", status)
+		t.Fatalf("Poll: want StatusFailed, got %d", status)
 	}
 }

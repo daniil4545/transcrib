@@ -1,4 +1,4 @@
-# Секреты и локальная конфигурация
+# Secrets and local configuration
 .env
 .env.*
 !.env.example
@@ -6,7 +6,7 @@
 *.pem
 secrets/
 
-# Go артефакты
+# Go artifacts
 /bin/
 /dist/
 /transcrib
@@ -17,7 +17,7 @@ vendor/
 *.out
 coverage.*
 
-# Локальные настройки AI-инструментов
+# Local tool settings
 .claude/settings.local.json
 .claude/projects/
 
@@ -29,5 +29,6 @@ coverage.*
 .DS_Store
 Thumbs.db
 
-# PII: анкета ЮKassa ИП (реквизиты/паспорт/банк) — не коммитим
+# PII: the YooKassa sole-proprietor questionnaire (requisites, passport, bank) is never committed
+# (the pattern matches the Russian file name on purpose)
 docs/Анкета_*

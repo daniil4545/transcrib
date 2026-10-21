@@ -1,65 +1,65 @@
-# Speech2Text — экономически целевой prod-поставщик под наблюдением
+# Speech2Text: the economically preferred prod provider, under observation
 
-Досье: статус, тарифы, качество, юр.часть, риски. Контракт API (файловый flow + Meeting API + Webhook) — [`API.md`](API.md). Mymeet остаётся рабочим fallback — `../mymeet/README.md`.
+Dossier: status, pricing, quality, legal, risks. API contract (file flow + Meeting API + Webhook): [`API.md`](API.md). Mymeet stays the working fallback: `../mymeet/README.md`.
 
-Исследование 2026-06-03; документация API получена 2026-06-10.
+Research dated 2026-06-03; API documentation obtained 2026-06-10.
 
-## Статус: prod/live-risk
+## Status: prod/live-risk
 
-Speech2Text **экономически целевой** поставщик транскрибации на масштабе и текущий prod-путь, но остаётся live-risk: после провала 2026-06-22 (зомби в постоянной комнате) 2026-06-24 поддержка заявила фиксы, ручные проверки показали частичный прогресс и новые проблемы (пустой Google Meet, статус/UX, качество summary). Экономику решает референс-тариф «24 Часа» (флэт 17 600 ₽/мес — 24 ч/сут, 3 потока из коробки, диаризация в цене, сверх лимита 0,40 ₽/мин ≈ 24 ₽/ч, доп. поток +100 ₽): он держит положительную маржу при подписке 1990 ₽ (~120-370 ₽/юзер), а per-minute mymeet (1,5-2 ₽/мин) на масштабе её съедает. Mymeet остаётся рабочим fallback; флип — одна строка `TRANSCRIPTION_PROVIDER`. Обоснование экономического выбора:
+Speech2Text is the **economically preferred** transcription provider at scale and the current prod path, but it remains live-risk: after the failure on 2026-06-22 (a zombie bot in a persistent room), support claimed fixes on 2026-06-24, and manual checks showed partial progress and new problems (an empty Google Meet, status/UX, summary quality). The economics are decided by the reference plan "24 Hours" (flat 17,600 RUB/month: 24 h/day, 3 parallel streams out of the box, diarization included, 0.40 RUB/min over the limit = about 24 RUB/h, an extra stream +100 RUB). It keeps a positive margin at a 1990 RUB subscription (~120-370 RUB/user), while per-minute mymeet (1.5-2 RUB/min) eats the margin at scale. Mymeet stays a working fallback; flipping is one line, `TRANSCRIPTION_PROVIDER`. Rationale for the economic choice:
 
-- **Экономика — на масштабе.** Рублёвые флэт-тарифы доминируют над per-minute mymeet на целевом объёме; перелом наступает после **~70-90 ч/мес**, на пилоте (десятки часов) mymeet дешевле.
-- **Нет структурного конфликта.** TG-бот @speech2textbot непрофильный (основной канал — веб/extension/корп.), компания заинтересована отдавать API. У mymeet — обратное: свой @mymeetaibot ($1.3M ARR) + **п.7.4 оферты** «запрет конкурирующего продукта».
-- **Контракт полный.** Meeting API + Webhook задокументированы официально (PDF 2026-06-10): `POST /api/meetings/join`, `POST /api/meetings/{id}/stop`, webhook `transcription.status_changed`. 8 платформ включая Телемост.
-- **Юр-зрелость.** ООО «Современные речевые технологии» (ИНН 9704223433, рег. 2023), серверы РФ, реестр отечественного ПО (№27300 от 21.03.2025), 152-ФЗ.
+- **Economics hold at scale.** Flat ruble plans beat per-minute mymeet at the target volume; the break-even is after **~70-90 h/month**, and at the pilot stage (tens of hours) mymeet is cheaper.
+- **No structural conflict.** The TG bot @speech2textbot is not their core product (the main channel is web/extension/corporate), and the company is interested in providing the API. Mymeet is the opposite: it has its own @mymeetaibot ($1.3M ARR) plus **clause 7.4 of the offer**, "ban on a competing product".
+- **Complete contract.** Meeting API + Webhook are officially documented (PDF 2026-06-10): `POST /api/meetings/join`, `POST /api/meetings/{id}/stop`, webhook `transcription.status_changed`. 8 platforms including Telemost.
+- **Legal maturity.** ООО «Современные речевые технологии» (Modern Speech Technologies LLC; INN 9704223433, registered 2023), servers in Russia, Russian domestic software registry (no. 27300 of 2025-03-21), 152-FZ.
 
-**Оговорка (execution risk):** s2t уже падал на живых тестах 2026-06-22; текущий prod-режим требует серии live-прогонов и быстрых инструментов дебага. Mymeet держим как fallback через тот же `TranscriptionProvider`.
+**Caveat (execution risk):** s2t already failed live tests on 2026-06-22; the current prod mode needs a series of live runs and fast debugging tools. Mymeet is kept as a fallback behind the same `TranscriptionProvider`.
 
-**Встречный довод (для честности перед заказчиком):** S2T отдаёт только транскрипт, саммари (F3) делаем мы через OpenRouter (`openrouter.go`), а это трансграничная передача ПДн в США. У mymeet саммари из шаблона на их стороне (РФ). Митигация: использовать российскую LLM (YandexGPT/GigaChat) либо оформить согласие/основание по 152-ФЗ.
+**Counterargument (for honesty toward the customer):** S2T returns only the transcript; we build the summary (F3) through OpenRouter (`openrouter.go`), and that is a cross-border transfer of personal data to the USA. With mymeet the summary is generated from a template on their side (Russia). Mitigation: use a Russian LLM (YandexGPT/GigaChat) or obtain consent/a legal basis under 152-FZ.
 
-**Открыто к живому тесту:** пустые результаты, машинно различимые фазы записи, структура `result/json` на разных платформах, удаление аудио после `done`. Закрыто пробой 2026-06-11: meeting-ручки живы; хост стандартизован `api.speech2text.ru` (`API.md` §0).
+**Open for a live test:** empty results, machine-distinguishable recording phases, the `result/json` structure on different platforms, audio deletion after `done`. Closed by the 2026-06-11 probe: the meeting endpoints are alive; the host is standardized as `api.speech2text.ru` (`API.md` §0).
 
-## Тарифы
+## Pricing
 
-Корпоративные (рубли), [speech2text.ru/rates](https://speech2text.ru/rates):
+Corporate plans (rubles), [speech2text.ru/rates](https://speech2text.ru/rates):
 
-| Тариф | Цена/мес | Лимит | Потоков |
+| Plan | Price/month | Limit | Streams |
 |---|---|---|---|
-| Корп. Старт | 0 ₽ + 2 ₽/мин | — | 1 |
-| Корп. Standard | 8 300 ₽ | 12 ч/день (~360 ч/мес) | 3 |
-| Корп. Professional | 16 400 ₽ | 24 ч/день (~720 ч/мес) | 6 |
+| Corp. Start | 0 RUB + 2 RUB/min | none | 1 |
+| Corp. Standard | 8,300 RUB | 12 h/day (~360 h/month) | 3 |
+| Corp. Professional | 16,400 RUB | 24 h/day (~720 h/month) | 6 |
 
-Предложение sales под наш кейс (2026-06-10): 24 ч/сут — 17 600 ₽/мес; 48 ч/сут — 35 200 ₽/мес (~1 440 ч/мес). Pay-as-you-go на Корп. Старт (2 ₽/мин) — удобно для старта без минимума; сверх лимита на остальных корп. тарифах — 1 ₽/мин. API доступен на корп. планах, отдельного API-тарифа нет. Reseller/white-label публично не оформлен — только через прямой B2B-договор. Открыто: что входит в «часы в сутки», лимит потоков сверх 6, цена для активного партнёра.
+Sales offer for our case (2026-06-10): 24 h/day: 17,600 RUB/month; 48 h/day: 35,200 RUB/month (~1,440 h/month). Pay-as-you-go on Corp. Start (2 RUB/min) is convenient for a start without a minimum; over the limit on the other corporate plans it is 1 RUB/min. The API is available on corporate plans; there is no separate API plan. Reseller/white-label is not publicly offered: only through a direct B2B contract. Open: what counts as "hours per day", the stream limit above 6, the price for an active partner.
 
-## Качество
+## Quality
 
-- Распознавание русского ~97% (заявлено), независимых WER-тестов нет — оценим на тестовом доступе.
-- Диаризация: `speakers` / `min_speakers` / `max_speakers`, формат «Спикер N: 0:00:00 — текст», нумерация стабильна в рамках сессии. **Качество диаризации на одноканальном аудио — главный продуктовый риск.** У S2T **независимых WER/диаризация-метрик НЕТ вообще** (только заявленные ~97%; у mymeet хотя бы есть внешний тест VC.ru ~70%).
-- Саммари: встроенная функция есть, но по ТЗ transcrib делает своё через OpenRouter — S2T отдаёт транскрипт.
+- Russian recognition ~97% (claimed), no independent WER tests; we will measure on test access.
+- Diarization: `speakers` / `min_speakers` / `max_speakers`, format "Спикер N: 0:00:00 - text" (the label means "Speaker N"), numbering is stable within a session. **Diarization quality on single-channel audio is the main product risk.** S2T has **no independent WER/diarization metrics at all** (only the claimed ~97%; mymeet at least has an external VC.ru test, ~70%).
+- Summary: a built-in function exists, but per the spec transcrib builds its own through OpenRouter: S2T returns the transcript.
 
-## Юридическая часть
+## Legal
 
-- ООО «Современные речевые технологии», ИНН 9704223433, ОГРН 1237700673121, Москва. Серверы РФ, трансграничной передачи нет (у самого S2T). Реестр отечественного ПО (№27300). 152-ФЗ в политике. Сертификация ФСТЭК не подтверждена; регистрация в реестре операторов ПДн РКН — проверить.
-- **Удаление аудио после `done` программно невозможно** (`DELETE` только в очереди) — privacy policy допускает обработку аудиоданных до 90 календарных дней. Это не срок доступности результата: live-инцидент 2026-07-14 показал HTTP 410 примерно через 7 суток; продуктовый контракт ограничивает историю неделей (см. `API.md` §2.6).
-- B2B-договор упоминается на /integration; безнал/счёт/акт/УПД — стандарт для ООО, детали уточнить.
-- Согласие участников на запись — ответственность пользователя (ст. 11 152-ФЗ), прописать в нашем пользовательском соглашении.
-- **Риск (отзыв otzovik):** один случай выдачи фрагментов чужого аудио — потенциальная утечка ПДн. Поднять изоляцию данных между клиентами на договорной стадии.
+- ООО «Современные речевые технологии» (Modern Speech Technologies LLC), INN 9704223433, OGRN 1237700673121, Moscow. Servers in Russia, no cross-border transfer (on the S2T side itself). Russian domestic software registry (no. 27300). 152-FZ in the policy. FSTEC certification is not confirmed; registration in the Roskomnadzor register of personal data operators: to be checked.
+- **Deleting audio after `done` is programmatically impossible** (`DELETE` works only while queued). The privacy policy allows processing of audio data for up to 90 calendar days. This is not the result availability period: the live incident of 2026-07-14 showed HTTP 410 after about 7 days; the product contract limits history to one week (see `API.md` §2.6).
+- A B2B contract is mentioned at /integration; cashless payment/invoice/act/UPD is standard for an LLC, details to be clarified.
+- Participants' consent to recording is the user's responsibility (Art. 11 of 152-FZ), to be written into our user agreement.
+- **Risk (otzovik review):** one case of fragments of someone else's audio being served is a potential personal data leak. Raise data isolation between customers at the contract stage.
 
-## Архитектурные следствия (для `speech2text.go`)
+## Architectural consequences (for `speech2text.go`)
 
-- **Текущий runtime — polling-first.** `orchestrator.go` опрашивает `GET /api/recognitions/{id}`; webhook `transcription.status_changed` остаётся future hardening для `web.go` и должен валидировать `secret_token`, писать в БД-очередь по ключу `(webhook_uid, transcription.id, status)` и отвечать 200.
-- **`paused`** (нехватка минут, code 102) — мониторим `/api/user/amounts`, держим баланс на лицевом счёте под overflow (pay-per-task), либо обрабатываем в state machine.
-- **Результат — `result/json`** (сегменты со спикерами), fallback `txt`. Точная схема — на тестовом доступе, сырой ответ в `jobs.raw_provider_response`.
-- Эскиз интерфейса — `API.md` §11.
+- **The current runtime is polling-first.** `orchestrator.go` polls `GET /api/recognitions/{id}`; the webhook `transcription.status_changed` remains future hardening for `web.go` and must validate `secret_token`, write to the DB queue by key `(webhook_uid, transcription.id, status)` and answer 200.
+- **`paused`** (not enough minutes, code 102): we monitor `/api/user/amounts`, keep a balance on the personal account against overflow (pay-per-task), or handle it in the state machine.
+- **The result is `result/json`** (segments with speakers), fallback `txt`. The exact schema is to be learned on test access; the raw response goes to `jobs.raw_provider_response`.
+- Interface sketch: `API.md` §11.
 
-## Открытые вопросы
+## Open questions
 
-Не блокируют разработку (mock + raw JSONB). К тест-/договорной стадии:
-- Живую серию s2t/OpenRouter нужно повторить после текущих UX/provider фиксов; поддержка s2t не считается источником истины без зелёного прогона.
-- Структура `result/json`, таймаут одиночества бота (заявленный автовыход не сработал 2026-06-22), поведение в waiting room.
-- Программное удаление после `done` (152-ФЗ), изоляция данных между клиентами, DPA, SLA.
-- Боевой тариф для активного партнёра, лимит потоков сверх 6, закрывающие документы.
+They do not block development (mock + raw JSONB). For the test/contract stage:
+- The live s2t/OpenRouter series must be repeated after the current UX/provider fixes; s2t support is not treated as a source of truth without a green run.
+- The `result/json` structure, the bot's alone-in-room timeout (the claimed auto-exit did not work on 2026-06-22), behavior in a waiting room.
+- Programmatic deletion after `done` (152-FZ), data isolation between customers, DPA, SLA.
+- The production plan for an active partner, the stream limit above 6, closing documents.
 
-## Источники
+## Sources
 
-[speech2text.ru](https://speech2text.ru/) (+ /integration, /rates, /privacy-policy, /meetings, /partner, /contact), [Habr код-пример](https://habr.com/ru/articles/926918/), [vc.ru тест](https://vc.ru/services/1447638-kak-za-10-minut-rasshifrovat-chasovoe-audio-lyuboi-slozhnosti-testiruem-servis-perevoda-audio-v-tekst-speech2text), [otzovik отзывы](https://otzovik.com/reviews/speech2text_ru-servis_rasshifrovki_audio_v_tekst/).
+[speech2text.ru](https://speech2text.ru/) (+ /integration, /rates, /privacy-policy, /meetings, /partner, /contact), [Habr code example](https://habr.com/ru/articles/926918/), [vc.ru test](https://vc.ru/services/1447638-kak-za-10-minut-rasshifrovat-chasovoe-audio-lyuboi-slozhnosti-testiruem-servis-perevoda-audio-v-tekst-speech2text), [otzovik reviews](https://otzovik.com/reviews/speech2text_ru-servis_rasshifrovki_audio_v_tekst/).

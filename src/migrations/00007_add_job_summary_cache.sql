@@ -1,9 +1,9 @@
 -- +goose Up
--- summary_md — сгенерированный конспект F3, закэшированный ДО доставки. Защита от
--- повторного платного LLM-вызова: при сбое Deliver джоба остаётся summarizing и
--- ретраится; без кэша каждый ретрай пересоздавал бы саммари заново (orchestrator
--- summarizeJob). На ретрае берём этот текст и только доставляем. NULL — саммари ещё
--- не сгенерировано (или demo summary-off, путь summarizeJob не достигается).
+-- summary_md is the generated F3 summary, cached BEFORE delivery. Protection against
+-- a repeated paid LLM call: when Deliver fails the job stays summarizing and
+-- is retried; without the cache every retry would regenerate the summary (orchestrator
+-- summarizeJob). On retry we take this text and only deliver. NULL - the summary is not yet
+-- generated (or demo summary-off, the summarizeJob path is not reached).
 ALTER TABLE jobs ADD COLUMN summary_md TEXT;
 
 -- +goose Down

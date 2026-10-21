@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-// Критические узлы слайса job-phases (plan-job-phases-slice.md «Storage»): фазовые
-// переходы joining→recording→processing, точки входа в done для s2t (из recording) и
-// mymeet (из processing), откат квоты из recording, и R2a parallel calls. Интеграционные,
-// бьют в Postgres через DATABASE_URL;
-// без него — Skip (newTestStorage).
+// Critical nodes of the job-phases slice (plan-job-phases-slice.md "Storage"): phase
+// transitions joining->recording->processing, entry points into done for s2t (from recording) and
+// mymeet (from processing), quota rollback from recording, and R2a parallel calls. Integration tests
+// that hit Postgres via DATABASE_URL;
+// without it they Skip (newTestStorage).
 
-// jobStatus читает только статус джобы (фазовые тесты не смотрят raw/ext).
+// jobStatus reads only the job status (phase tests do not look at raw/ext).
 func jobStatus(t *testing.T, s *Storage, id int64) string {
 	t.Helper()
 	var status string
@@ -25,9 +25,9 @@ func jobStatus(t *testing.T, s *Storage, id int64) string {
 	return status
 }
 
-// TestSetJobRecording_Phase — переход joining→recording (провайдер OnCall). moved=true
-// на фактическом переходе; повторный вызов (уже recording) — moved=false (guard по
-// статусу), статус-сообщение не редактируется второй раз.
+// TestSetJobRecording_Phase: the joining->recording transition (provider OnCall). moved=true
+// on the actual transition; a repeated call (already recording) gives moved=false (status
+// guard), and the status message is not edited a second time.
 func TestSetJobRecording_Phase(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -40,9 +40,9 @@ func TestSetJobRecording_Phase(t *testing.T) {
 	if err := s.SetJobSubmitted(ctx, job.ID, "ext-phase-rec"); err != nil {
 		t.Fatalf("SetJobSubmitted: %v", err)
 	}
-	// После submit джоба в joining (а не processing — сдвиг семантики слайса).
+	// After submit the job is in joining (not processing: a shift in slice semantics).
 	if got := jobStatus(t, s, job.ID); got != string(JobJoining) {
-		t.Fatalf("status после submit = %q, ожидали %q", got, JobJoining)
+		t.Fatalf("status after submit = %q, expected %q", got, JobJoining)
 	}
 
 	moved, err := s.SetJobRecording(ctx, job.ID)
@@ -50,25 +50,25 @@ func TestSetJobRecording_Phase(t *testing.T) {
 		t.Fatalf("SetJobRecording #1: %v", err)
 	}
 	if !moved {
-		t.Error("первый SetJobRecording: moved=false, ожидали true (joining→recording)")
+		t.Error("first SetJobRecording: moved=false, expected true (joining->recording)")
 	}
 	if got := jobStatus(t, s, job.ID); got != string(JobRecording) {
-		t.Errorf("status = %q, ожидали %q", got, JobRecording)
+		t.Errorf("status = %q, expected %q", got, JobRecording)
 	}
 
-	// Повторный тик: джоба уже recording — guard не двигает, moved=false.
+	// Repeated tick: the job is already recording, the guard does not move it, moved=false.
 	moved, err = s.SetJobRecording(ctx, job.ID)
 	if err != nil {
 		t.Fatalf("SetJobRecording #2: %v", err)
 	}
 	if moved {
-		t.Error("повторный SetJobRecording: moved=true, ожидали false (guard по статусу)")
+		t.Error("repeated SetJobRecording: moved=true, expected false (status guard)")
 	}
 }
 
-// TestSetJobProcessing_Phase — переход в processing (провайдер Transcribing, mymeet).
-// Принимает вход из recording (обычный путь) и из joining (поллинг перескочил
-// recording — короткая встреча). Повторный вызов — moved=false.
+// TestSetJobProcessing_Phase: the transition into processing (provider Transcribing, mymeet).
+// Accepts input from recording (the normal path) and from joining (polling skipped
+// recording: a short meeting). A repeated call gives moved=false.
 func TestSetJobProcessing_Phase(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -91,19 +91,19 @@ func TestSetJobProcessing_Phase(t *testing.T) {
 			t.Fatalf("SetJobProcessing #1: %v", err)
 		}
 		if !moved {
-			t.Error("SetJobProcessing из recording: moved=false, ожидали true")
+			t.Error("SetJobProcessing from recording: moved=false, expected true")
 		}
 		if got := jobStatus(t, s, job.ID); got != string(JobProcessing) {
-			t.Errorf("status = %q, ожидали %q", got, JobProcessing)
+			t.Errorf("status = %q, expected %q", got, JobProcessing)
 		}
 
-		// Повторный тик — уже processing, moved=false.
+		// Repeated tick: already processing, moved=false.
 		moved, err = s.SetJobProcessing(ctx, job.ID)
 		if err != nil {
 			t.Fatalf("SetJobProcessing #2: %v", err)
 		}
 		if moved {
-			t.Error("повторный SetJobProcessing: moved=true, ожидали false (guard по статусу)")
+			t.Error("repeated SetJobProcessing: moved=true, expected false (status guard)")
 		}
 	})
 
@@ -116,16 +116,16 @@ func TestSetJobProcessing_Phase(t *testing.T) {
 		if err := s.SetJobSubmitted(ctx, job.ID, "ext-phase-proc-join"); err != nil {
 			t.Fatalf("SetJobSubmitted: %v", err)
 		}
-		// Без SetJobRecording: тик перескочил фазу recording, джоба ещё joining.
+		// Without SetJobRecording: the tick skipped the recording phase, the job is still joining.
 		moved, err := s.SetJobProcessing(ctx, job.ID)
 		if err != nil {
 			t.Fatalf("SetJobProcessing: %v", err)
 		}
 		if !moved {
-			t.Error("SetJobProcessing из joining: moved=false, ожидали true (guard включает joining)")
+			t.Error("SetJobProcessing from joining: moved=false, expected true (the guard includes joining)")
 		}
 		if got := jobStatus(t, s, job.ID); got != string(JobProcessing) {
-			t.Errorf("status = %q, ожидали %q", got, JobProcessing)
+			t.Errorf("status = %q, expected %q", got, JobProcessing)
 		}
 	})
 }
@@ -157,17 +157,17 @@ func TestSetJobProcessing_StoresRecordingDuration(t *testing.T) {
 		t.Fatalf("SetJobProcessing: %v", err)
 	}
 	if !moved {
-		t.Fatal("SetJobProcessing moved=false, ожидали true")
+		t.Fatal("SetJobProcessing moved=false, expected true")
 	}
 	billed, duration := jobBilling(t, s, job.ID)
 	if billed != 0 {
-		t.Fatalf("billed_minutes до done = %d, ожидали 0", billed)
+		t.Fatalf("billed_minutes before done = %d, expected 0", billed)
 	}
 	if duration == nil {
-		t.Fatal("duration_seconds is nil, ожидали lifecycle duration")
+		t.Fatal("duration_seconds is nil, expected lifecycle duration")
 	}
 	if *duration < int((7*time.Minute).Seconds()) || *duration > int((8*time.Minute).Seconds()) {
-		t.Fatalf("duration_seconds = %d, ожидали около 7m10s", *duration)
+		t.Fatalf("duration_seconds = %d, expected about 7m10s", *duration)
 	}
 
 	if err := s.SetJobDone(ctx, job.ID, []byte(`{"transcript":"ok"}`), 0, 180); err != nil {
@@ -175,16 +175,16 @@ func TestSetJobProcessing_StoresRecordingDuration(t *testing.T) {
 	}
 	billed, duration = jobBilling(t, s, job.ID)
 	if billed != 8 {
-		t.Fatalf("billed_minutes = %d, ожидали 8 (ceil по минутам)", billed)
+		t.Fatalf("billed_minutes = %d, expected 8 (ceil by minutes)", billed)
 	}
 	if duration == nil {
-		t.Fatal("duration_seconds после done is nil")
+		t.Fatal("duration_seconds after done is nil")
 	}
 }
 
-// TestSetJobDone_FromRecording — s2t-путь: джоба идёт joining→recording→done, минуя
-// processing (s2t не отдаёт Transcribing). Guard SetJobDone включает recording, поэтому
-// finishTranscription закрывает джобу прямо из recording. Триальный счётчик инкрементится.
+// TestSetJobDone_FromRecording: the s2t path: the job goes joining->recording->done, bypassing
+// processing (s2t does not report Transcribing). The SetJobDone guard includes recording, so
+// finishTranscription closes the job straight from recording. The trial counter is incremented.
 func TestSetJobDone_FromRecording(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -203,22 +203,22 @@ func TestSetJobDone_FromRecording(t *testing.T) {
 
 	raw := []byte(`{"transcript":"s2t"}`)
 	if err := s.SetJobDone(ctx, job.ID, raw, 3600, 180); err != nil {
-		t.Fatalf("SetJobDone из recording: %v", err)
+		t.Fatalf("SetJobDone from recording: %v", err)
 	}
 	status, _, gotRaw := jobRow(t, s, job.ID)
 	if status != string(JobDone) {
-		t.Errorf("status = %q, ожидали %q", status, JobDone)
+		t.Errorf("status = %q, expected %q", status, JobDone)
 	}
 	if !jsonEqual(gotRaw, raw) {
-		t.Errorf("raw = %q, ожидали эквивалент %q", gotRaw, raw)
+		t.Errorf("raw = %q, expected equivalent of %q", gotRaw, raw)
 	}
 	if got := trialDone(t, s, userID); got != 1 {
-		t.Errorf("trial_meetings_done = %d, ожидали 1 (done из recording инкрементит счётчик)", got)
+		t.Errorf("trial_meetings_done = %d, expected 1 (done from recording increments the counter)", got)
 	}
 }
 
-// TestSetJobDone_FromProcessing — mymeet-путь без саммари (SUMMARIZER_PROVIDER=off):
-// джоба joining→recording→processing→done, без summarizing. Guard включает processing.
+// TestSetJobDone_FromProcessing: the mymeet path without a summary (SUMMARIZER_PROVIDER=off):
+// the job goes joining->recording->processing->done, without summarizing. The guard includes processing.
 func TestSetJobDone_FromProcessing(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -239,22 +239,22 @@ func TestSetJobDone_FromProcessing(t *testing.T) {
 	}
 
 	if err := s.SetJobDone(ctx, job.ID, []byte(`{"transcript":"mymeet"}`), 3600, 180); err != nil {
-		t.Fatalf("SetJobDone из processing: %v", err)
+		t.Fatalf("SetJobDone from processing: %v", err)
 	}
 	if got := jobStatus(t, s, job.ID); got != string(JobDone) {
-		t.Errorf("status = %q, ожидали %q", got, JobDone)
+		t.Errorf("status = %q, expected %q", got, JobDone)
 	}
 	if got := trialDone(t, s, userID); got != 1 {
-		t.Errorf("trial_meetings_done = %d, ожидали 1", got)
+		t.Errorf("trial_meetings_done = %d, expected 1", got)
 	}
 }
 
-// TestSetJobDone_FromJoining — поллинг дискретен (тик 30с) и может перескочить обе
-// фазы: один тик видит connecting (джоба в joining), следующий уже new/done (короткая
-// встреча). finishTranscription тогда зовёт SetJobDone прямо из joining, минуя
-// recording/processing. Guard SetJobDone расширен на joining именно под этот пропуск
-// (plan-job-phases-slice.md «Storage», ответ на ревью M2). Триальный счётчик инкрементится
-// ровно раз — переход one-shot под guard.
+// TestSetJobDone_FromJoining: polling is discrete (30s tick) and may skip both
+// phases: one tick sees connecting (job in joining), the next already sees new/done (a short
+// meeting). finishTranscription then calls SetJobDone straight from joining, bypassing
+// recording/processing. The SetJobDone guard is extended to joining precisely for this skip
+// (plan-job-phases-slice.md "Storage", answer to review M2). The trial counter is incremented
+// exactly once: the transition is one-shot under the guard.
 func TestSetJobDone_FromJoining(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -267,30 +267,30 @@ func TestSetJobDone_FromJoining(t *testing.T) {
 	if err := s.SetJobSubmitted(ctx, job.ID, "ext-done-from-join"); err != nil {
 		t.Fatalf("SetJobSubmitted: %v", err)
 	}
-	// Без SetJobRecording/SetJobProcessing: тик перескочил обе фазы, джоба ещё joining.
+	// Without SetJobRecording/SetJobProcessing: the tick skipped both phases, the job is still joining.
 	if got := jobStatus(t, s, job.ID); got != string(JobJoining) {
-		t.Fatalf("status перед done = %q, ожидали %q", got, JobJoining)
+		t.Fatalf("status before done = %q, expected %q", got, JobJoining)
 	}
 
 	raw := []byte(`{"transcript":"short"}`)
 	if err := s.SetJobDone(ctx, job.ID, raw, 3600, 180); err != nil {
-		t.Fatalf("SetJobDone из joining: %v", err)
+		t.Fatalf("SetJobDone from joining: %v", err)
 	}
 	status, _, gotRaw := jobRow(t, s, job.ID)
 	if status != string(JobDone) {
-		t.Errorf("status = %q, ожидали %q (done напрямую из joining)", status, JobDone)
+		t.Errorf("status = %q, expected %q (done directly from joining)", status, JobDone)
 	}
 	if !jsonEqual(gotRaw, raw) {
-		t.Errorf("raw = %q, ожидали эквивалент %q", gotRaw, raw)
+		t.Errorf("raw = %q, expected equivalent of %q", gotRaw, raw)
 	}
 	if got := trialDone(t, s, userID); got != 1 {
-		t.Errorf("trial_meetings_done = %d, ожидали 1 (done из joining инкрементит счётчик ровно раз)", got)
+		t.Errorf("trial_meetings_done = %d, expected 1 (done from joining increments the counter exactly once)", got)
 	}
 }
 
-// TestFailJobWithQuotaRefund_FromRecording — §5.2: сбой/watchdog в фазе recording
-// (бот ещё на встрече) откатывает резерв квоты. Guard расширен на joining/recording,
-// поэтому встреча, упавшая до выхода бота, возвращает триальную встречу юзеру.
+// TestFailJobWithQuotaRefund_FromRecording: §5.2: a failure/watchdog in the recording phase
+// (the bot is still in the meeting) rolls back the quota reservation. The guard is extended to joining/recording,
+// so a meeting that failed before the bot left returns the trial meeting to the user.
 func TestFailJobWithQuotaRefund_FromRecording(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -301,7 +301,7 @@ func TestFailJobWithQuotaRefund_FromRecording(t *testing.T) {
 		t.Fatalf("CreateJob: %v", err)
 	}
 	if got := trialUsed(t, s, userID); got != 1 {
-		t.Fatalf("trial_meetings_used после резерва = %d, ожидали 1", got)
+		t.Fatalf("trial_meetings_used after reservation = %d, expected 1", got)
 	}
 	if err := s.SetJobSubmitted(ctx, job.ID, "ext-fail-from-rec"); err != nil {
 		t.Fatalf("SetJobSubmitted: %v", err)
@@ -315,18 +315,18 @@ func TestFailJobWithQuotaRefund_FromRecording(t *testing.T) {
 		t.Fatalf("FailJobWithQuotaRefund: %v", err)
 	}
 	if !refunded {
-		t.Error("refunded=false, ожидали true (откат из recording)")
+		t.Error("refunded=false, expected true (rollback from recording)")
 	}
 	if got := trialUsed(t, s, userID); got != 0 {
-		t.Errorf("trial_meetings_used после отката = %d, ожидали 0", got)
+		t.Errorf("trial_meetings_used after rollback = %d, expected 0", got)
 	}
 	if got := jobStatus(t, s, job.ID); got != string(JobFailed) {
-		t.Errorf("status = %q, ожидали %q", got, JobFailed)
+		t.Errorf("status = %q, expected %q", got, JobFailed)
 	}
 }
 
-// TestCreateJob_RateLimit_Phases — R2a: фаза активной Job больше не блокирует
-// другую ссылку. Квота остаётся денежным ограничителем, тот же URL режется dedup.
+// TestCreateJob_RateLimit_Phases: R2a: the phase of an active Job no longer blocks
+// another link. The quota stays the monetary limiter, the same URL is cut by dedup.
 func TestCreateJob_RateLimit_Phases(t *testing.T) {
 	ctx := context.Background()
 
@@ -347,10 +347,10 @@ func TestCreateJob_RateLimit_Phases(t *testing.T) {
 
 		second, err := s.CreateJob(ctx, userID, "https://meet.google.com/rl-rec-second", "mock", 180)
 		if err != nil {
-			t.Fatalf("CreateJob #2 при первой в recording: %v", err)
+			t.Fatalf("CreateJob #2 with the first in recording: %v", err)
 		}
 		if second.ID == 0 {
-			t.Error("вторая Job не создана при первой в recording")
+			t.Error("second Job not created while the first is in recording")
 		}
 	})
 
@@ -372,13 +372,13 @@ func TestCreateJob_RateLimit_Phases(t *testing.T) {
 			t.Fatalf("SetJobProcessing: %v", err)
 		}
 
-		// Первая в processing (бот вышел) — вторая под другим URL проходит.
+		// First in processing (the bot has left): the second under a different URL passes.
 		second, err := s.CreateJob(ctx, userID, "https://meet.google.com/rl-proc-second", "mock", 180)
 		if err != nil {
-			t.Errorf("CreateJob #2 при первой в processing: %v, ожидали успех (§5.8 не держит)", err)
+			t.Errorf("CreateJob #2 with the first in processing: %v, expected success (§5.8 does not hold)", err)
 		}
 		if second.ID == 0 {
-			t.Error("вторая джоба не создана при первой в processing")
+			t.Error("second job not created while the first is in processing")
 		}
 	})
 
@@ -403,7 +403,7 @@ func TestCreateJob_RateLimit_Phases(t *testing.T) {
 
 		_, err = s.CreateJob(ctx, userID, url, "mock", 180)
 		if !errors.Is(err, ErrDuplicateActiveJob) {
-			t.Errorf("CreateJob тем же URL: err = %v, ожидали ErrDuplicateActiveJob", err)
+			t.Errorf("CreateJob with the same URL: err = %v, expected ErrDuplicateActiveJob", err)
 		}
 	})
 }

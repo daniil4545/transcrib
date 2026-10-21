@@ -14,16 +14,16 @@ import (
 	"time"
 )
 
-// Компайл-тайм ассерт: OpenRouterSummarizer реализует интерфейс Summarizer.
+// Compile-time assertion: OpenRouterSummarizer implements the Summarizer interface.
 var _ Summarizer = (*OpenRouterSummarizer)(nil)
 
 //go:embed summary_map_prompt.txt
 var defaultMapPrompt string
 
-// maxChunkChars — порог map-reduce: транскрипт длиннее режем на куски, саммаризируем
-// по частям и сводим. Порог по РАЗМЕРУ, а не по лимиту контекста модели: при 1M-контексте
-// gemini лимитный триггер не сработал бы никогда (мёртвый код). ~60k символов (~20k токенов
-// для русского) — короткие встречи идут одним вызовом, длинные дробятся.
+// maxChunkChars is the map-reduce threshold: a longer transcript is cut into chunks, summarized
+// piece by piece and merged. The threshold is by SIZE, not by the model's context limit: with a 1M context
+// in gemini a limit trigger would never fire (dead code). ~60k characters (~20k tokens
+// for Russian): short meetings go in one call, long ones are split.
 const maxChunkChars = 60000
 
 const (
@@ -32,18 +32,18 @@ const (
 	openRouterMaxBackoff  = 500 * time.Millisecond
 )
 
-// OpenRouterSummarizer — реализация Summarizer (F3) через OpenRouter (API.md).
-// OpenAI-совместимый chat-completion: один вызов на короткой встрече, map-reduce на длинной.
+// OpenRouterSummarizer is the Summarizer (F3) implementation via OpenRouter (API.md).
+// OpenAI-compatible chat completion: one call for a short meeting, map-reduce for a long one.
 type OpenRouterSummarizer struct {
 	apiKey  string
 	baseURL string // default https://openrouter.ai/api/v1
-	model   string // напр. google/gemini-2.5-flash; свап через .env без пересборки
-	prompt  string // reduce-промпт (summary_prompt.txt); map-промпт — defaultMapPrompt
+	model   string // e.g. google/gemini-2.5-flash; swap via .env without rebuilding
+	prompt  string // reduce prompt (summary_prompt.txt); the map prompt is defaultMapPrompt
 	client  *http.Client
 }
 
-// NewOpenRouterSummarizer создаёт провайдер. apiKey только в заголовке Authorization,
-// в логи и тексты ошибок не попадает. prompt берётся из встроенного summary_prompt.txt.
+// NewOpenRouterSummarizer creates the provider. apiKey only in the Authorization header,
+// it does not appear in logs or error messages. prompt comes from the embedded summary_prompt.txt.
 func NewOpenRouterSummarizer(apiKey, baseURL, model, proxyURL string) *OpenRouterSummarizer {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if proxyURL != "" {
@@ -58,18 +58,18 @@ func NewOpenRouterSummarizer(apiKey, baseURL, model, proxyURL string) *OpenRoute
 		baseURL: baseURL,
 		model:   model,
 		prompt:  defaultSummaryPrompt,
-		// Реальный предел — ctx (summaryTimeout в orchestrator оборачивает весь Summarize,
-		// включая N вызовов map-reduce). Timeout здесь — страховка от одиночного зависшего
-		// вызова, заведомо больше ctx-таймаута, чтобы не срабатывать первым.
+		// The real limit is ctx (summaryTimeout in the orchestrator wraps the whole Summarize,
+		// including N map-reduce calls). The Timeout here is a safeguard against a single hung
+		// call, deliberately larger than the ctx timeout so it does not fire first.
 		client: &http.Client{Timeout: 5 * time.Minute, Transport: transport},
 	}
 }
 
-// Summarize превращает markdown-транскрипт в markdown-конспект. Короткая встреча — один
-// вызов; длинная (> maxChunkChars) — map-reduce: сжать куски map-промптом, свести reduce-промптом.
+// Summarize turns a markdown transcript into a markdown summary. A short meeting is one
+// call; a long one (> maxChunkChars) is map-reduce: compress chunks with the map prompt, merge with the reduce prompt.
 func (s *OpenRouterSummarizer) Summarize(ctx context.Context, transcript string) (string, error) {
 	if strings.TrimSpace(transcript) == "" {
-		// Пустой вход не шлём в API (поведение на пустоте не зафиксировано, API.md §5).
+		// We do not send empty input to the API (behavior on empty input is not pinned, API.md §5).
 		return "", fmt.Errorf("openrouter summarize: empty transcript")
 	}
 
@@ -89,15 +89,15 @@ func (s *OpenRouterSummarizer) Summarize(ctx context.Context, transcript string)
 	return s.chat(ctx, s.prompt, strings.Join(partials, "\n\n"))
 }
 
-// splitTranscript режет транскрипт на куски не длиннее limit, разбивая строго по границам
-// строк — реплики спикеров не рвутся. Одиночная строка длиннее limit (гигантская реплика
-// без переносов) уходит отдельным куском как есть.
+// splitTranscript cuts the transcript into chunks no longer than limit, splitting strictly on
+// line boundaries so speaker turns are not torn. A single line longer than limit (a giant turn
+// without line breaks) goes as its own chunk as is.
 func splitTranscript(transcript string, limit int) []string {
 	lines := strings.Split(transcript, "\n")
 	var chunks []string
 	var b strings.Builder
 	for _, line := range lines {
-		// +1 на перенос между строками; не флашим пустой буфер (иначе теряли бы строку).
+		// +1 for the newline between lines; do not flush an empty buffer (otherwise a line would be lost).
 		if b.Len() > 0 && b.Len()+1+len(line) > limit {
 			chunks = append(chunks, b.String())
 			b.Reset()
@@ -113,11 +113,11 @@ func splitTranscript(transcript string, limit int) []string {
 	return chunks
 }
 
-// orRequest/orResponse/orError — минимальные структуры контракта chat/completions (API.md §1).
+// orRequest/orResponse/orError are the minimal structures of the chat/completions contract (API.md §1).
 type orRequest struct {
 	Model       string      `json:"model"`
 	Messages    []orMessage `json:"messages"`
-	Temperature float64     `json:"temperature"` // без omitempty: 0.0 — валидное значение, omitempty молча дал бы дефолт 1.0
+	Temperature float64     `json:"temperature"` // no omitempty: 0.0 is a valid value, omitempty would silently give the default 1.0
 	MaxTokens   int         `json:"max_tokens,omitempty"`
 }
 
@@ -132,13 +132,13 @@ type orResponse struct {
 		Message      struct {
 			Content string `json:"content"`
 		} `json:"message"`
-		Error *orError `json:"error"` // HTTP 200 может нести ошибку прямо в choice (API.md §1.2)
+		Error *orError `json:"error"` // HTTP 200 may carry an error right in the choice (API.md §1.2)
 	} `json:"choices"`
-	Error *orError `json:"error"` // ...или на верхнем уровне тела 200
+	Error *orError `json:"error"` // ...or at the top level of a 200 body
 }
 
-// orError — тело ошибки {"error":{"code","message"}}. Code разнотипен (int в chat, string в
-// beta Responses API), поэтому RawMessage — Unmarshal не упадёт; нам важен message для диагноза.
+// orError is the error body {"error":{"code","message"}}. Code is of varying type (int in chat, string in the
+// beta Responses API), hence RawMessage: Unmarshal will not fail; the message matters to us for diagnosis.
 type orError struct {
 	Code     json.RawMessage            `json:"code"`
 	Message  string                     `json:"message"`
@@ -199,9 +199,9 @@ func newOpenRouterCallError(err error, retry bool, retryAfter time.Duration) err
 	return &openRouterCallError{err: err, retry: retry, retryAfter: retryAfter}
 }
 
-// chat делает один вызов chat/completions и возвращает текст ответа. Любой не-stop
-// finish_reason, ошибка в теле 200 или пустой content — ошибка (контракт Summarize:
-// orchestrator уведёт джобу в failed_summary, транскрипт уже у юзера).
+// chat makes one chat/completions call and returns the response text. Any non-stop
+// finish_reason, an error in a 200 body or an empty content is an error (Summarize contract:
+// the orchestrator moves the job to failed_summary, the transcript is already with the user).
 func (s *OpenRouterSummarizer) chat(ctx context.Context, systemPrompt, userContent string) (string, error) {
 	var lastErr error
 	for attempt := 1; attempt <= openRouterMaxAttempts; attempt++ {
@@ -222,12 +222,12 @@ func (s *OpenRouterSummarizer) chat(ctx context.Context, systemPrompt, userConte
 	return "", lastErr
 }
 
-// chatOnce делает один вызов chat/completions и валидирует один ответ. Retry-решение
-// держим снаружи, чтобы map-reduce не пересчитывал уже успешные chunks.
+// chatOnce makes one chat/completions call and validates one response. The retry decision
+// is kept outside so map-reduce does not recompute chunks that already succeeded.
 func (s *OpenRouterSummarizer) chatOnce(ctx context.Context, systemPrompt, userContent string) (string, error) {
 	body, err := json.Marshal(orRequest{
 		Model:       s.model,
-		Temperature: 0.3, // низкая — конспект детерминированнее, без креатива
+		Temperature: 0.3, // low: the summary is more deterministic, no creativity
 		MaxTokens:   8192,
 		Messages: []orMessage{
 			{Role: "system", Content: systemPrompt},
@@ -252,8 +252,8 @@ func (s *OpenRouterSummarizer) chatOnce(ctx context.Context, systemPrompt, userC
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Лимит против сбойного провайдера/прокси с гигантским телом: ответ саммари — единицы КБ,
-	// 1 MiB перекрывает с запасом. Тело читаем целиком: и для парса, и для текста ошибки.
+	// Limit against a faulty provider/proxy with a giant body: a summary response is a few KB,
+	// 1 MiB covers it with a margin. We read the body in full: for parsing and for the error text.
 	const maxBody = 1 << 20
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
@@ -264,7 +264,7 @@ func (s *OpenRouterSummarizer) chatOnce(ctx context.Context, systemPrompt, userC
 	}
 
 	if resp.StatusCode/100 != 2 {
-		// Тело несёт {"error":{"message"}} — главный источник диагноза. Ключ в нём не светится (он в заголовке).
+		// The body carries {"error":{"message"}}, the main source of diagnosis. The key is not exposed in it (it is in the header).
 		return "", newOpenRouterCallError(
 			fmt.Errorf("openrouter: HTTP %d: %s", resp.StatusCode, data[:min(len(data), 256)]),
 			openRouterHTTPRetryable(resp.StatusCode),
@@ -294,7 +294,7 @@ func (s *OpenRouterSummarizer) chatOnce(ctx context.Context, systemPrompt, userC
 			0,
 		)
 	}
-	// finish_reason != stop (length/content_filter/error) — конспект неполный/сбойный (API.md §1.2).
+	// finish_reason != stop (length/content_filter/error): the summary is incomplete/faulty (API.md §1.2).
 	if choice.FinishReason != "" && choice.FinishReason != "stop" {
 		return "", fmt.Errorf("openrouter: finish_reason=%q (incomplete)", choice.FinishReason)
 	}
@@ -340,7 +340,7 @@ func openRouterRetryDelay(attempt int, retryAfter time.Duration) time.Duration {
 	if delay > openRouterMaxBackoff {
 		delay = openRouterMaxBackoff
 	}
-	// Небольшой jitter разводит одновременные job'ы без добавления глобального random state.
+	// A small jitter spreads out simultaneous jobs without adding global random state.
 	return delay + time.Duration(time.Now().UnixNano()%int64(delay/4+1))
 }
 

@@ -14,41 +14,41 @@ import (
 	"time"
 )
 
-// Компайл-тайм ассерт: Speech2TextProvider реализует интерфейс.
-// Дрейф сигнатуры поймает компилятор, а не runtime.
+// Compile-time assertion: Speech2TextProvider implements the interface.
+// Signature drift is caught by the compiler, not at runtime.
 var _ TranscriptionProvider = (*Speech2TextProvider)(nil)
 
-// Speech2TextProvider — основной поставщик транскрибации (architecture.md §8).
-// Отправляет бота на встречу через Meeting API и забирает результат по готовности.
+// Speech2TextProvider is the primary transcription provider (architecture.md §8).
+// It sends the bot to a meeting via the Meeting API and picks up the result when ready.
 type Speech2TextProvider struct {
 	apiKey   string
 	baseURL  string       // default https://api.speech2text.ru
-	client   *http.Client // таймаут снаружи через ctx; свой клиент (не дефолтный без таймаута)
+	client   *http.Client // timeout comes from ctx outside; our own client (not the default one without a timeout)
 	mu       sync.Mutex
 	lastPoll map[string]string
 }
 
-// NewSpeech2Text создаёт провайдер. apiKey никогда не попадает в логи и тексты ошибок.
+// NewSpeech2Text creates the provider. apiKey never appears in logs or error messages.
 func NewSpeech2Text(apiKey, baseURL string) *Speech2TextProvider {
 	return &Speech2TextProvider{
 		apiKey:  apiKey,
 		baseURL: baseURL,
-		// Основной таймаут — ctx (providerTimeout в orchestrator.go). Timeout здесь —
-		// страховка от будущих вызывающих с другим ctx (webhook-handler в web.go),
-		// заведомо больше ctx-таймаута, чтобы не срабатывать первым.
+		// The main timeout is ctx (providerTimeout in orchestrator.go). The Timeout here is
+		// a safeguard against future callers with a different ctx (webhook handler in web.go),
+		// deliberately larger than the ctx timeout so it does not fire first.
 		client:   &http.Client{Timeout: 60 * time.Second},
 		lastPoll: make(map[string]string),
 	}
 }
 
-// Submit отправляет бота на встречу, возвращает external id задачи у поставщика.
-// POST /api/meetings/join — минимальный payload.
+// Submit sends the bot to a meeting and returns the provider's external task id.
+// POST /api/meetings/join: minimal payload.
 func (p *Speech2TextProvider) Submit(ctx context.Context, job Job) (string, error) {
 	payload := map[string]string{"meeting_url": job.MeetingURL}
-	// bot_name — отображаемое имя бота-участника на встрече (бренд; контракт API.md §2.2).
+	// bot_name is the display name of the bot participant in the meeting (brand; contract API.md §2.2).
 	payload["bot_name"] = "transcrib"
-	// Zoom кладёт пароль в query (?pwd=...), но s2t ждёт его отдельным полем
-	// access_code (ответ поддержки 2026-06-11) — без него бот не войдёт на встречу.
+	// Zoom puts the password in the query (?pwd=...), but s2t expects it as a separate
+	// access_code field (support reply, 2026-06-11); without it the bot will not enter the meeting.
 	if code := meetingAccessCode(job.MeetingURL); code != "" {
 		payload["access_code"] = code
 	}
@@ -71,10 +71,10 @@ func (p *Speech2TextProvider) Submit(ctx context.Context, job Job) (string, erro
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Любой 2xx, не строго 201: форма успешного ответа живьём не проверена
-	// (API.md §0). Если реальный API отвечает 200, жёсткий чек на 201 превратил бы
-	// успешный Submit в «ошибку» → ретрай каждый тик → новый бот на ту же встречу
-	// каждые 30 секунд, каждый жжёт платные минуты. Пустой id отсечётся ниже.
+	// Any 2xx, not strictly 201: the shape of a successful response was not verified live
+	// (API.md §0). If the real API answers 200, a hard check for 201 would turn
+	// a successful Submit into an "error", then a retry every tick, a new bot in the same meeting
+	// every 30 seconds, each burning paid minutes. An empty id is rejected below.
 	if resp.StatusCode/100 != 2 {
 		return "", s2tHTTPError("submit", resp)
 	}
@@ -91,8 +91,8 @@ func (p *Speech2TextProvider) Submit(ctx context.Context, job Job) (string, erro
 	return result.ID, nil
 }
 
-// meetingAccessCode достаёт пароль встречи из query-параметра pwd (Zoom).
-// Пустая строка — пароля нет или URL не парсится (валидация URL уже прошла в tg.go).
+// meetingAccessCode extracts the meeting password from the pwd query parameter (Zoom).
+// An empty string means there is no password or the URL does not parse (URL validation already passed in tg.go).
 func meetingAccessCode(meetingURL string) string {
 	u, err := url.Parse(meetingURL)
 	if err != nil {
@@ -101,8 +101,8 @@ func meetingAccessCode(meetingURL string) string {
 	return u.Query().Get("pwd")
 }
 
-// s2tStatusResp — минимальная структура ответа GET /api/recognitions/{id}.
-// Неизвестные поля игнорируются (обычный Unmarshal): живьём контракт не проверялся (API.md §7).
+// s2tStatusResp is the minimal response structure of GET /api/recognitions/{id}.
+// Unknown fields are ignored (ordinary Unmarshal): the contract was not verified live (API.md §7).
 type s2tStatusResp struct {
 	Status struct {
 		Value       string `json:"value"`
@@ -111,11 +111,11 @@ type s2tStatusResp struct {
 	} `json:"status"`
 }
 
-// Poll запрашивает статус задачи и маппит его в ProviderStatus.
-// Маппинг строго по API.md §2.5/§9.
+// Poll requests the task status and maps it to ProviderStatus.
+// The mapping follows API.md §2.5/§9 strictly.
 func (p *Speech2TextProvider) Poll(ctx context.Context, externalJobID string) (ProviderStatus, error) {
-	// PathEscape: id приходит от поставщика, но мусорный id со слэшем молча
-	// превратился бы в другой маршрут.
+	// PathEscape: the id comes from the provider, but a junk id with a slash would silently
+	// turn into a different route.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		p.baseURL+"/api/recognitions/"+url.PathEscape(externalJobID), nil)
 	if err != nil {
@@ -160,9 +160,9 @@ func (p *Speech2TextProvider) logPollStatus(externalJobID, value string, code in
 		"provider_status", status.String())
 }
 
-// mapS2TStatus переводит пару value+code в ProviderStatus по API.md §2.5/§9.
-// Неизвестное value → ошибка (оркестратор залогирует и ретраит), не молчаливый Pending:
-// лучше шум в логах, чем вечно залипшая джоба без следа.
+// mapS2TStatus maps a value+code pair to ProviderStatus per API.md §2.5/§9.
+// An unknown value gives an error (the orchestrator logs and retries), not a silent Pending:
+// better log noise than a forever-stuck job with no trace.
 func mapS2TStatus(value string, code int, description string) (ProviderStatus, error) {
 	switch value {
 	case "queued":
@@ -185,17 +185,17 @@ func mapS2TStatus(value string, code int, description string) (ProviderStatus, e
 			return StatusPending, fmt.Errorf("speech2text poll: unknown queued code %d", code)
 		}
 	case "done":
-		// code 200 — успех, code 204 — речь не обнаружена. Оба переходят в Done:
-		// Fetch сам отличит пустой результат и вернёт ErrEmptyTranscript.
+		// code 200 is success, code 204 is no speech detected. Both go to Done:
+		// Fetch itself tells an empty result apart and returns ErrEmptyTranscript.
 		return StatusDone, nil
 	case "error", "cancelled":
 		return StatusFailed, nil
 	case "paused":
-		// Нехватка минут на счёте (API.md §7). Оркестратор ждёт как Pending.
+		// Not enough minutes on the account (API.md §7). The orchestrator waits as for Pending.
 		return StatusPaused, nil
 	default:
-		// Дрейф контракта или новый статус поставщика — не паниковать,
-		// но вернуть ошибку, чтобы оркестратор логировал дрейф и ретраил.
+		// Contract drift or a new provider status: do not panic,
+		// but return an error so the orchestrator logs the drift and retries.
 		return StatusPending, fmt.Errorf("speech2text poll: unknown status value %q (code %d)", value, code)
 	}
 }
@@ -205,33 +205,33 @@ func normalizeS2TDescription(description string) string {
 	return strings.ReplaceAll(description, "ё", "е")
 }
 
-// Fetch забирает готовый результат двумя запросами (решение 9 спеки):
-//   - result/txt → TranscriptMarkdown (plain text, доставляем юзеру)
-//   - result/json → Raw (JSONB-колонка; колонка не примет plain text)
+// Fetch picks up the finished result with two requests (spec decision 9):
+//   - result/txt -> TranscriptMarkdown (plain text, delivered to the user)
+//   - result/json -> Raw (JSONB column; the column does not accept plain text)
 func (p *Speech2TextProvider) Fetch(ctx context.Context, externalJobID string) (Result, error) {
 	txt, err := p.fetchFormat(ctx, externalJobID, "txt")
 	if err != nil {
-		return Result{}, err // префикс speech2text уже внутри fetchFormat
+		return Result{}, err // the speech2text prefix is already inside fetchFormat
 	}
 
 	transcript := string(txt)
-	// done code 204 — «речь не обнаружена» (API.md §2.5): s2t возвращает пустой body
-	// или 204. TrimSpace: тело из одних переносов — тоже «пусто».
+	// done code 204 is "no speech detected" (API.md §2.5): s2t returns an empty body
+	// or 204. TrimSpace: a body of only newlines is also "empty".
 	if strings.TrimSpace(transcript) == "" {
 		return Result{}, ErrEmptyTranscript
 	}
 
 	raw, err := p.fetchFormat(ctx, externalJobID, "json")
 	if err != nil {
-		// json не критичен для доставки, но ошибка не должна исчезнуть без следа:
-		// Fetch возвращает nil-ошибку, и оркестратору нечего будет логировать.
-		// Частичный результат: Raw = nil → orchestrator запишет NULL.
+		// json is not critical for delivery, but the error must not vanish without a trace:
+		// Fetch returns a nil error, and the orchestrator would have nothing to log.
+		// Partial result: Raw = nil, so the orchestrator writes NULL.
 		slog.Warn("speech2text: result/json failed, delivering without raw",
 			"err", err, "external_job_id", externalJobID)
 		return Result{TranscriptMarkdown: transcript, Raw: nil}, nil
 	}
 	durationSeconds := s2tDurationSeconds(raw)
-	// nil raw при пустом ответе — orchestrator кладёт NULL в JSONB.
+	// nil raw on an empty response: the orchestrator puts NULL into JSONB.
 	if len(raw) == 0 {
 		raw = nil
 	}
@@ -265,8 +265,8 @@ func s2tDurationSeconds(raw []byte) int {
 	return int(maxTo)
 }
 
-// fetchFormat делает GET /api/recognitions/{id}/result/{fmt} и возвращает тело.
-// 204 No Content возвращает пустой []byte (вызывающий решает что делать с пустотой).
+// fetchFormat does GET /api/recognitions/{id}/result/{fmt} and returns the body.
+// 204 No Content returns an empty []byte (the caller decides what to do with emptiness).
 func (p *Speech2TextProvider) fetchFormat(ctx context.Context, externalJobID, format string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		p.baseURL+"/api/recognitions/"+url.PathEscape(externalJobID)+"/result/"+format, nil)
@@ -281,7 +281,7 @@ func (p *Speech2TextProvider) fetchFormat(ctx context.Context, externalJobID, fo
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// 204 = пусто, не ошибка (API.md §2.5 done code 204).
+	// 204 = empty, not an error (API.md §2.5 done code 204).
 	if resp.StatusCode == http.StatusNoContent {
 		return nil, nil
 	}
@@ -289,9 +289,9 @@ func (p *Speech2TextProvider) fetchFormat(ctx context.Context, externalJobID, fo
 		return nil, s2tHTTPError("fetch "+format, resp)
 	}
 
-	// Лимит против сбойного провайдера/прокси с гигантским телом: безлимитный
-	// ReadAll положил бы единственный процесс по памяти. Транскрипт 3-часовой
-	// встречи — единицы МБ, 32 MiB перекрывает с запасом.
+	// Limit against a faulty provider/proxy with a giant body: an unlimited
+	// ReadAll would take down the only process on memory. A transcript of a 3-hour
+	// meeting is a few MB; 32 MiB covers it with a margin.
 	const maxResult = 32 << 20
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResult+1))
 	if err != nil {
@@ -303,12 +303,12 @@ func (p *Speech2TextProvider) fetchFormat(ctx context.Context, externalJobID, fo
 	return data, nil
 }
 
-// Cancel останавливает запись досрочно: POST /api/meetings/{id}/stop (API.md §2.3).
-// ВНИМАНИЕ: по уточнению поддержки 2026-06-17 для уже пишущего бота /stop ФИНАЛИЗИРУЕТ
-// фрагмент с транскриптом, а не «отменяет без результата». Поэтому manual/watchdog
-// stop для recording-джобы ждёт transcript и биллит фактическое время; refund остаётся
-// только если результата нет. Best-effort: «задача не найдена» приходит как HTTP 400 (API.md §0) —
-// для уже завершённой джобы ожидаемо, не молчим, отдаём ошибку, игнорировать — за вызывающим.
+// Cancel stops recording early: POST /api/meetings/{id}/stop (API.md §2.3).
+// NOTE: per the support clarification of 2026-06-17, for a bot already recording /stop FINALIZES
+// the fragment with a transcript, rather than "cancelling with no result". So manual/watchdog
+// stop for a recording job waits for the transcript and bills the actual time; refund remains
+// only if there is no result. Best-effort: "task not found" arrives as HTTP 400 (API.md §0);
+// expected for an already finished job, we do not stay silent, we return the error, ignoring it is up to the caller.
 func (p *Speech2TextProvider) Cancel(ctx context.Context, externalJobID string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		p.baseURL+"/api/meetings/"+url.PathEscape(externalJobID)+"/stop", nil)
@@ -329,11 +329,11 @@ func (p *Speech2TextProvider) Cancel(ctx context.Context, externalJobID string) 
 	return nil
 }
 
-// s2tHTTPError формирует ошибку с HTTP-кодом и усечённым телом ответа.
-// Живой факт (API.md §0): ошибки s2t — JSON {"name","message","code","status"},
-// «задача не найдена» приходит как HTTP 400, поэтому тело в ошибке — главный
-// источник диагноза. API-ключ в тело не попадает (он в заголовке запроса).
-// Свободная функция: состояние провайдера ей не нужно.
+// s2tHTTPError builds an error with the HTTP code and a truncated response body.
+// Live fact (API.md §0): s2t errors are JSON {"name","message","code","status"},
+// "task not found" arrives as HTTP 400, so the body in the error is the main
+// source of diagnosis. The API key does not get into the body (it is in the request header).
+// A free function: it does not need provider state.
 func s2tHTTPError(op string, resp *http.Response) error {
 	const maxBody = 256
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))

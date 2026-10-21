@@ -1,170 +1,172 @@
-# Google OAuth + Drive для transcrib
+# Google OAuth + Drive for transcrib
 
-> **Канон для:** интеграции Google (привязка аккаунта по OAuth 2.0, доставка результата как Google Doc в Drive юзера), выбор скоупа `drive.file`, жизненный цикл refresh-токенов (Testing mode 7 дней), `/reconnect`/`awaiting_reauth`, конвертация markdown→Doc, путь Testing→Production (brand verification), compliance (152-ФЗ, Google User Data Policy).
-> **Зеркала:** `architecture.md` §14 (post-0.1 Google delivery), `db.md` §3.2/§3.6/§5 (`google_accounts`, `reauth_from`, индексы).
-> **Контракт API Google** (OAuth-endpoints, параметры, token exchange/refresh, `invalid_grant`, Drive v3 multipart+convert, ошибки, rate limits, Go-уровень `x/oauth2`, классификация скоупа, верификация) — [`docs/api/google/API.md`](api/google/API.md). Здесь — интеграционные решения и поток, не контракт.
-> **Реализация.** План слайса удалён вместе с переходом проекта на поддержку; трек живёт в issue #13 (P2, post-0.1). История плана — в git до тега `0.0.3.7`.
-> **Не дублировать здесь:** SQL и схему (`db.md` §3.2/§3.6/§5), state machine Job и runtime limits (`architecture.md` §7/§13), wire-контракт (`api/google/API.md`).
+> **Canon for:** the Google integration (account linking via OAuth 2.0, delivering the result as a Google Doc in the user's Drive), the choice of the `drive.file` scope, the refresh token lifecycle (Testing mode, 7 days), `/reconnect`/`awaiting_reauth`, markdown to Doc conversion, the Testing to Production path (brand verification), compliance (152-FZ, Google User Data Policy).
+> **Mirrors:** `architecture.md` §14 (post-0.1 Google delivery), `db.md` §3.2/§3.6/§5 (`google_accounts`, `reauth_from`, indexes).
+> **Google API contract** (OAuth endpoints, parameters, token exchange/refresh, `invalid_grant`, Drive v3 multipart+convert, errors, rate limits, the Go-level `x/oauth2`, scope classification, verification): [`docs/api/google/API.md`](api/google/API.md). This file holds integration decisions and flow, not the contract.
+> **Implementation.** The slice plan was deleted when the project moved to maintenance; the track lives in issue #13 (P2, post-0.1). The plan history is in git up to the tag `0.0.3.7`.
+> **Do not duplicate here:** SQL and schema (`db.md` §3.2/§3.6/§5), the Job state machine and runtime limits (`architecture.md` §7/§13), the wire contract (`api/google/API.md`).
 >
-> **Статус:** канон post-0.1 Google-интеграции (F5 Google Doc + F8.5 `/reconnect`). Release 0.1 доставляет результат `.md`-файлами в Telegram; Google-режим реализуется отдельным слайсом `plan-google-slice.md` через **Testing mode без brand verification**. Brand verification (Testing→Production) — следующий шаг после живого Google-теста.
+> **Status:** canon of the post-0.1 Google integration (F5 Google Doc + F8.5 `/reconnect`). Release 0.1 delivers the result as `.md` files in Telegram; the Google mode is implemented as a separate slice `plan-google-slice.md` through **Testing mode without brand verification**. Brand verification (Testing to Production) is the next step after the live Google test.
 
-Версия: 1.0 (2026-06-14). Источник: мультиагентный ресёрч официальных доков `developers.google.com` + `support.google.com` (5 фасетов, контракт вынесен в [`api/google/API.md`](api/google/API.md)). Документ описывает доставку результата в Google Drive и привязку аккаунта. Сопровождает `architecture.md` (модули `google.go`/`web.go`/`google_delivery.go`) и `db.md` (таблица `google_accounts`).
+Version: 1.0 (2026-06-14). Source: multi-agent research of the official docs `developers.google.com` + `support.google.com` (5 facets, the contract is moved to [`api/google/API.md`](api/google/API.md)). This document describes delivering the result to Google Drive and linking the account. It accompanies `architecture.md` (modules `google.go`/`web.go`/`google_delivery.go`) and `db.md` (table `google_accounts`).
 
-## 1. Связка
+## 1. Overview
 
 ```
-┌──────────┐   OAuth-ссылка     ┌────────────┐   code на callback   ┌──────────┐
-│  юзер в  │ ◄────────────────► │   Google   │ ───────────────────► │  web.go  │
-│ Telegram │   жмёт, даёт доступ │  accounts  │                      │ (callback)│
-└────┬─────┘                    └────────────┘                      └────┬─────┘
-     │ результат (ссылка на Doc)                                          │ code→refresh_token
-     ▼                                                            ┌───────▼────────┐
+┌──────────┐   OAuth link       ┌────────────┐  code to callback    ┌───────────┐
+│ user in  │ <----------------> │   Google   │ ───────────────────> │  web.go   │
+│ Telegram │  taps, grants access│  accounts  │                      │ (callback)│
+└────┬─────┘                    └────────────┘                      └────┬──────┘
+     │ result (link to the Doc)                                           │ code -> refresh_token
+     v                                                            ┌───────v────────┐
 ┌──────────────┐                                                  │   google.go    │
 │google_delivery│  Deliver(ctx, chatID, filename, caption, content)│ OAuth + Drive  │
-│     .go      │ ───────────────────────────────────────────────►│  (drive.file)  │
+│     .go      │ ───────────────────────────────────────────────> │  (drive.file)  │
 └──────────────┘                                                  └───────┬────────┘
-                                                                          │ папка + Doc
-                                                                          ▼
+                                                                          │ folder + Doc
+                                                                          v
                                                                   ┌──────────────┐
-                                                                  │  Drive юзера │
+                                                                  │ User's Drive │
                                                                   └──────────────┘
 ```
 
-**Роли:**
-- **Google accounts** — OAuth-сервер: показывает consent, выдаёт `code`, обменивает на токены.
-- **Google Drive** — хранилище результата. Документы лежат **у юзера**, мы их **не храним** (оператором ПД по содержимому не становимся, `architecture.md` §14/§15).
-- **Наш сервис** — `google.go` (OAuth-флоу + создание папки/Doc), `web.go` (callback + бужение `awaiting_reauth`), `google_delivery.go` (реализация `DocumentDelivery`: создать Doc + отправить ссылку юзеру), `tg.go` (OAuth-ссылка в онбординге, `/reconnect`, пуши).
+**Roles:**
+- **Google accounts** is the OAuth server: shows the consent screen, issues `code`, exchanges it for tokens.
+- **Google Drive** is the storage of the result. Documents live **with the user**, we **do not store** them (we do not become a personal data operator for the content, `architecture.md` §14/§15).
+- **Our service:** `google.go` (OAuth flow + creating the folder/Doc), `web.go` (callback + waking `awaiting_reauth` jobs), `google_delivery.go` (implementation of `DocumentDelivery`: create a Doc + send the link to the user), `tg.go` (OAuth link in onboarding, `/reconnect`, push messages).
 
-**Что хранится у нас:** только `refresh_token` + `folder_id` в `google_accounts` (`db.md` §3.2). Access-токен — в памяти процесса, обновляется `x/oauth2` сам. Готовые документы и аудио — **не храним**.
+**What we store:** only `refresh_token` + `folder_id` in `google_accounts` (`db.md` §3.2). The access token lives in process memory and is renewed by `x/oauth2` itself. Finished documents and audio are **not stored**.
 
-## 2. Подключение (Google Cloud, Testing mode)
+## 2. Setup (Google Cloud, Testing mode)
 
-Делается в Google Cloud Console, **без brand verification** (она — для Production, §7):
+Done in Google Cloud Console, **without brand verification** (that is for Production, §7):
 
-1. console.cloud.google.com → создать проект.
-2. Включить **Google Drive API**.
-3. OAuth consent screen: **External**, app name, support email; scope `drive.file`; добавить демо-юзеров в **Test users** (лимит 100).
-4. Credentials → OAuth client ID (**Web application**), Authorized redirect URI = `GOOGLE_REDIRECT_URL`. Скопировать **Client ID + Secret** в `.env`.
+1. console.cloud.google.com: create a project.
+2. Enable the **Google Drive API**.
+3. OAuth consent screen: **External**, app name, support email; scope `drive.file`; add demo users to **Test users** (limit 100).
+4. Credentials -> OAuth client ID (**Web application**), Authorized redirect URI = `GOOGLE_REDIRECT_URL`. Copy **Client ID + Secret** to the env file.
 
-- **Один OAuth-клиент на обе среды.** Test/prod различаются publishing status (Testing vs Production), а не парой кредов — в отличие от ЮKassa (там test/live = разные `provider_token`). Свапа кредов «test→prod» нет; «боевой режим» = Publish app + brand verification.
-- **Локальный прогон G2** — `localhost`/loopback redirect разрешён в Testing (`api/google/API.md` §7), либо туннель на поднятый `web.go`.
+- **One OAuth client for both environments.** Test/prod differ by publishing status (Testing vs Production), not by a credential pair, unlike YooKassa (where test/live are different `provider_token`s). There is no "test to prod" credential swap; "live mode" = Publish app + brand verification.
+- **Local G2 run:** a `localhost`/loopback redirect is allowed in Testing (`api/google/API.md` §7), or a tunnel to the running `web.go`.
 
-## 3. Скоуп `drive.file` — выбор и почему
+## 3. The `drive.file` scope: choice and reasons
 
-**Единственный скоуп — `https://www.googleapis.com/auth/drive.file`** (non-sensitive, Recommended). Даёт пофайловый доступ: создавать файлы и читать/менять **только** созданное приложением. Папку и Doc'ы создаёт само приложение → они в зоне доступа; к остальному Drive юзера доступа нет.
+**The only scope is `https://www.googleapis.com/auth/drive.file`** (non-sensitive, Recommended). It gives per-file access: create files and read/modify **only** what the app created. The app creates the folder and the Docs, so they are inside the access zone; the rest of the user's Drive is inaccessible.
 
-**Почему именно он (главная развилка):** restricted-скоупы (`drive`, `drive.readonly`, `drive.metadata`) дают доступ ко всему Drive и требуют **CASA security assessment** (тяжёлая проверка, недели). `drive.file` их **обходит** — security assessment не нужен, остаётся только лёгкая brand verification (~2-3 дня, §7). Контракт классификации — `api/google/API.md` §14.
+**Why this one (the main fork):** restricted scopes (`drive`, `drive.readonly`, `drive.metadata`) give access to the whole Drive and require a **CASA security assessment** (a heavy review, weeks). `drive.file` **avoids** them: no security assessment, only the light brand verification remains (~2-3 days, §7). The classification contract is in `api/google/API.md` §14.
 
-**Следствие для архитектуры:** документы создаём, не читаем чужое; «не храним готовые документы у себя» (`architecture.md` §15) согласуется со скоупом естественно.
+**Consequence for the architecture:** we create documents and do not read anyone else's; "we do not store finished documents ourselves" (`architecture.md` §15) fits the scope naturally.
 
-## 4. Поток интеграции
+## 4. Integration flow
 
-### 4.1. Привязка (онбординг Google-режима)
+### 4.1. Linking (onboarding of the Google mode)
 
 ```
-/start → согласие 152-ФЗ → tg.go отдаёт AuthURL(state) → юзер авторизуется на Google
-  → Google шлёт code на /oauth/google/callback → web.go валидирует state
-  → google.go: Exchange(code) → refresh_token → создать папку «Транскрибации созвонов»
-  → storage.UpsertGoogleAccount(refresh_token, folder_id) → tg.go: «Google привязан»
+/start -> 152-FZ consent -> tg.go gives AuthURL(state) -> user authorizes on Google
+  -> Google sends code to /oauth/google/callback -> web.go validates state
+  -> google.go: Exchange(code) -> refresh_token -> create the folder «Транскрибации созвонов»
+  -> storage.UpsertGoogleAccount(refresh_token, folder_id) -> tg.go: «Google привязан»
 ```
 
-- **`state` обязателен** — CSRF-защита + привязка OAuth-сессии к Telegram `userID`. Хранение `state` на MVP — in-memory (map userID↔state с TTL); DB-backed (`oauth_states`) — к продакшену (`plan-google-slice.md` техдолг).
-- **`access_type=offline` + `prompt=consent`** в AuthURL — обязательны, иначе refresh-токен не придёт (`api/google/API.md` §2.1).
-- **Enforcement привязки включается только в Google-режиме.** Release 0.1 с Telegram-доставкой не блокирует приём meeting-ссылок из-за отсутствия Google-привязки. В будущем Google-режиме приём ссылок блокируется (`IsGoogleLinked`), пока аккаунт не привязан.
+The folder name «Транскрибации созвонов» ("Call transcripts") and the message «Google привязан» ("Google linked") are user-facing and stay in Russian.
 
-### 4.2. Доставка результата
+- **`state` is required:** CSRF protection + binding the OAuth session to the Telegram `userID`. Storing `state` in the MVP is in-memory (a userID-to-state map with TTL); DB-backed (`oauth_states`) comes by production (`plan-google-slice.md` tech debt).
+- **`access_type=offline` + `prompt=consent`** in AuthURL are mandatory, otherwise no refresh token arrives (`api/google/API.md` §2.1).
+- **Link enforcement is on only in the Google mode.** Release 0.1 with Telegram delivery does not block accepting meeting links for lack of a Google link. In the future Google mode, accepting links is blocked (`IsGoogleLinked`) until the account is linked.
 
-`google_delivery.go` реализует `DocumentDelivery` (`Deliver(ctx, chatID, filename, caption string, content []byte) error`): внутри `Deliver` создаёт Doc через `google.go` и **сам шлёт юзеру ссылку** (держит `notify`-замыкание поверх `*tele.Bot`, как `telegram_delivery.go` шлёт сам файл). Интерфейс **не меняем** — обоснование в `plan-google-slice.md` (журнал, п.4).
+### 4.2. Result delivery
 
-Текущий `orchestrator.go` для Telegram-доставки отдаёт transcript и summary в финальной grouped delivery. Целевая Google-семантика post-0.1 уточняется в `plan-google-slice.md`: базовый вариант — отдельные Doc-файлы в папке пользователя без изменения интерфейса `DocumentDelivery`.
+`google_delivery.go` implements `DocumentDelivery` (`Deliver(ctx, chatID, filename, caption string, content []byte) error`): inside `Deliver` it creates the Doc through `google.go` and **sends the link to the user itself** (it holds a `notify` closure over `*tele.Bot`, the way `telegram_delivery.go` sends the file itself). The interface is **not changed**; the rationale is in `plan-google-slice.md` (log, item 4).
 
-### 4.3. `/reconnect` и `awaiting_reauth` (закрывает дыру с refresh)
+The current `orchestrator.go` for Telegram delivery hands over the transcript and summary in the final grouped delivery. The target post-0.1 Google semantics are specified in `plan-google-slice.md`: the base variant is separate Doc files in the user's folder without changing the `DocumentDelivery` interface.
 
-При доставке `CreateDoc` может получить `invalid_grant` (юзер отозвал доступ или токен протух в Testing за 7 дней) → `ErrReauth`. Тогда:
-- `SetJobAwaitingReauth`: статус `awaiting_reauth` (**не `failed`**), текущий статус (`processing`|`summarizing`) запоминается в `reauth_from`. **Резерв квоты НЕ откатывается** (транскрипт уже у поставщика, юзер заплатил).
-- `tg.go` шлёт пуш «переподключите Google: /reconnect».
-- После повторного OAuth-callback `web.go` → `WakeAwaitingReauthJobs(userID)`: восстанавливает `reauth_from` (`UPDATE jobs SET status = reauth_from, reauth_from = NULL ...`). Orchestrator подхватывает **ровно с той точки**, где упал — без дубля уже доставленного документа.
+### 4.3. `/reconnect` and `awaiting_reauth` (closes the refresh gap)
 
-Полная разводка — `architecture.md` §14; SQL и индексы — `db.md` §3.6/§5. Wire-уровень `invalid_grant` и Go-детекция — `api/google/API.md` §6/§16.5.
+During delivery `CreateDoc` may get `invalid_grant` (the user revoked access or the token expired in Testing after 7 days) -> `ErrReauth`. Then:
+- `SetJobAwaitingReauth`: status `awaiting_reauth` (**not `failed`**), the current status (`processing`|`summarizing`) is remembered in `reauth_from`. **The quota reservation is NOT rolled back** (the transcript is already with the provider, the user has paid).
+- `tg.go` sends a push «переподключите Google: /reconnect» ("reconnect Google: /reconnect").
+- After the repeated OAuth callback, `web.go` calls `WakeAwaitingReauthJobs(userID)`: it restores `reauth_from` (`UPDATE jobs SET status = reauth_from, reauth_from = NULL ...`). The orchestrator picks up **exactly from the point** where it failed, without duplicating an already delivered document.
 
-## 5. Refresh-токены: Testing mode — главный нюанс (аналог «рекуррента» у платежей)
+The full split is in `architecture.md` §14; SQL and indexes in `db.md` §3.6/§5. The wire level of `invalid_grant` and Go detection are in `api/google/API.md` §6/§16.5.
 
-**В Testing mode refresh-токены протухают за 7 дней.** ✅ Подтверждено офиц. докой (`api/google/API.md` §5). Условие: External + publishing status Testing + offline-токен. Наш `drive.file` — **не basic** (для правила протухания важна дихотомия basic / не-basic, а не non-sensitive; по классификации §3 `drive.file` — non-sensitive), поэтому правило **применяется**.
+## 5. Refresh tokens: Testing mode is the main nuance (analog of "recurring" for payments)
 
-**Что это значит для демо:** refresh-токен умирает каждые 7 дней → доступ к Drive рвётся → нужен путь восстановления. Закрыто двумя механизмами:
-1. **`/reconnect`** (§4.3) — юзер переподключается, Job'ы возобновляются с точки падения.
-2. **Refresh-token monitor** — post-0.1 крон-тик раз в сутки шлёт пуш «через 2 дня доступ к Google истечёт, обнови через /reconnect». Относится к классу F9-пушей.
+**In Testing mode refresh tokens expire after 7 days.** [OK] Confirmed by the official docs (`api/google/API.md` §5). Condition: External + publishing status Testing + an offline token. Our `drive.file` is **not basic** (what matters for the expiry rule is the basic / non-basic dichotomy, not non-sensitive; by the classification in §3 `drive.file` is non-sensitive), so the rule **applies**.
 
-**Снимается только переводом приложения In production** (Publish app + brand verification, §7) — тогда токены живут неограниченно, монитор и частые `/reconnect` убираются.
+**What this means for the demo:** the refresh token dies every 7 days, so access to Drive breaks and a recovery path is needed. It is covered by two mechanisms:
+1. **`/reconnect`** (§4.3): the user reconnects, Jobs resume from the point of failure.
+2. **Refresh-token monitor:** a post-0.1 cron tick once a day sends a push «через 2 дня доступ к Google истечёт, обнови через /reconnect» ("Google access expires in 2 days, renew via /reconnect"). Belongs to the class of F9 push messages.
 
-> **Открытый вопрос (см. §11):** монитор тикает по «давно обновляли», но в схеме `google_accounts` (`db.md` §3.2) **нет колонки `last_refresh_at`** — нужна колонка либо иной критерий. Разрешить при реализации монитора.
+**It goes away only by moving the app to In production** (Publish app + brand verification, §7): then tokens live indefinitely, and the monitor and frequent `/reconnect` disappear.
 
-## 6. Конвертация markdown → нативный Google Doc
+> **Open question (see §11):** the monitor ticks on "was refreshed long ago", but the `google_accounts` schema (`db.md` §3.2) **has no `last_refresh_at` column**: either a column or another criterion is needed. Resolve when implementing the monitor.
 
-Doc создаётся **загрузкой markdown с конвертацией**: `POST /upload/drive/v3/files?uploadType=multipart`, метадата с `mimeType:"application/vnd.google-apps.document"` + контент с `Content-Type: text/markdown`. Google конвертирует на сервере. Docs API и `batchUpdate` **не нужны** — остаёмся в `drive.file`. Полный wire-контракт — `api/google/API.md` §10.
+## 6. Converting markdown to a native Google Doc
 
-**⚠ Единственный реальный риск достоверности:** конвертация именно `text/markdown` анонсирована Google (07.2024), но не была в устной сводке таблицы импорт-форматов. **Решение:**
-- основной путь — `text/markdown`;
-- **fallback `text/html`** (стабильный импорт-формат) готов за флагом — markdown→HTML конвертим на своей стороне;
-- на G2 проверить оба live-чеком `GET /drive/v3/about?fields=importFormats`.
+The Doc is created by **uploading markdown with conversion**: `POST /upload/drive/v3/files?uploadType=multipart`, metadata with `mimeType:"application/vnd.google-apps.document"` + content with `Content-Type: text/markdown`. Google converts on the server. The Docs API and `batchUpdate` are **not needed**: we stay within `drive.file`. The full wire contract is in `api/google/API.md` §10.
 
-Картинки в markdown конвертируются плохо — у наших транскриптов/саммари их нет, неактуально.
+**[!] The only real confidence risk:** the conversion of exactly `text/markdown` was announced by Google (07.2024) but was not in the verbal summary of the import-format table. **Decision:**
+- the main path is `text/markdown`;
+- the **`text/html` fallback** (a stable import format) is ready behind a flag: we convert markdown to HTML on our side;
+- on G2 check both with a live `GET /drive/v3/about?fields=importFormats`.
 
-## 7. Путь Testing → Production (brand verification)
+Images in markdown convert poorly; our transcripts/summaries have none, so it is irrelevant.
 
-**Это продакшен-трек, НЕ блокер демо.** Демо работает в Testing mode (§2). Переход в Production снимает 7-дневное протухание токенов (§5) и экран «приложение не проверено». Детальные инфра-шаги (nginx server-блок + Certbot, homepage, privacy на `transcrib.example.com`, Search Console, submit) — `plan-google-slice.md` (раздел «Путь в Production»).
+## 7. Testing to Production path (brand verification)
 
-**Ключевая находка:** наш единственный скоуп `drive.file` — non-sensitive, поэтому нужна **только brand verification (~2-3 рабочих дня)**, а НЕ тяжёлая sensitive/restricted scope-верификация с CASA. Оценка «4-6 недель» в ранних канонах относилась к restricted-скоупам, которых у нас нет.
+**This is a production track, NOT a demo blocker.** The demo works in Testing mode (§2). Moving to Production removes the 7-day token expiry (§5) and the "app not verified" screen. The detailed infra steps (nginx server block + Certbot, homepage, privacy on `transcrib.example.com`, Search Console, submit) are in `plan-google-slice.md` (section "Path to Production").
 
-**Триггер brand verification:** External user type **+** показ logo/app name на consent screen. Что проверяет Google (`api/google/API.md` §15.3):
+**Key finding:** our only scope `drive.file` is non-sensitive, so **only brand verification (~2-3 business days)** is needed, NOT the heavy sensitive/restricted scope verification with CASA. The "4-6 weeks" estimate in earlier canons applied to restricted scopes, which we do not have.
 
-| Элемент | Требование |
+**Brand verification trigger:** External user type **+** showing a logo/app name on the consent screen. What Google checks (`api/google/API.md` §15.3):
+
+| Element | Requirement |
 |---|---|
-| App name + logo | На consent screen |
-| Support email | Есть (допустим gmail) |
-| Homepage | Публично доступна, релевантна, не ссылка на Telegram/стор |
-| Privacy policy | Видна юзеру, **на том же домене, что homepage**, описывает работу с Google-данными |
-| Domain ownership | Все top-level домены из URI подтверждены в Google Search Console |
+| App name + logo | On the consent screen |
+| Support email | Present (gmail is acceptable) |
+| Homepage | Publicly accessible, relevant, not a Telegram/store link |
+| Privacy policy | Visible to the user, **on the same domain as the homepage**, describes handling of Google data |
+| Domain ownership | All top-level domains from the URIs are verified in Google Search Console |
 
-**Реальный длинный шаг — не ревью Google, а наша инфраструктура:** публичная homepage + privacy policy на домене `transcrib.example.com` + nginx server-блок/Certbot TLS + подтверждение домена в Search Console. Совпадает с инфра-частью продакшен-доводки (Этап 3). Публичная версия должна быть доступна на `https://transcrib.example.com/privacy/`.
+**The really long step is not the Google review but our infrastructure:** a public homepage + privacy policy on the domain `transcrib.example.com` + nginx server block/Certbot TLS + domain verification in Search Console. It coincides with the infra part of the production finalization (Stage 3). The public version must be available at `https://transcrib.example.com/privacy/`.
 
-## 8. Библиотека — `golang.org/x/oauth2`
+## 8. Library: `golang.org/x/oauth2`
 
-**OAuth — через `golang.org/x/oauth2` + `golang.org/x/oauth2/google`.** Даёт `oauth2.Config` (`AuthCodeURL`/`Exchange`) и `Client(ctx, token)`, который **сам обновляет** access-токен из refresh и **сам сигналит** `invalid_grant` (`*oauth2.RetrieveError`) — ровно триггер `awaiting_reauth`. Ручной refresh не пишем. Имена, эскизы — `api/google/API.md` §16.
+**OAuth goes through `golang.org/x/oauth2` + `golang.org/x/oauth2/google`.** It provides `oauth2.Config` (`AuthCodeURL`/`Exchange`) and `Client(ctx, token)`, which **renews** the access token from the refresh token **itself** and **signals** `invalid_grant` (`*oauth2.RetrieveError`) **itself**, which is exactly the `awaiting_reauth` trigger. We do not write a manual refresh. Names and sketches: `api/google/API.md` §16.
 
-**Drive — сырой `net/http`, без `google.golang.org/api/drive/v3`.** Две ручки (папка + Doc) против тяжёлого дерева зависимостей (`grpc`/`protobuf`/`gax`) — нерационально. HTTP-клиент берём у `oauth2.Config.Client` (авто-токен). Соответствует стеку проекта (`net/http`) и симметрично `billing.go` (ЮKassa тоже сырым net/http).
+**Drive is raw `net/http`, without `google.golang.org/api/drive/v3`.** Two endpoints (folder + Doc) against a heavy dependency tree (`grpc`/`protobuf`/`gax`) is not worth it. The HTTP client comes from `oauth2.Config.Client` (auto-token). This matches the project stack (`net/http`) and is symmetric with `billing.go` (YooKassa is also raw net/http).
 
-**Подводные камни Go (`api/google/API.md` §16):**
-- `&oauth2.Token{RefreshToken: rt}` форсит refresh из-за **пустого AccessToken**, не из-за zero Expiry — не подставлять фейковый AccessToken.
-- `invalid_grant` прилетает **лениво** — на первом Drive-запросе, не из `Client()`. Маппинг в `ErrReauth` вешать на место Drive-вызова.
-- `mime/multipart` пишет `form-data` — для Drive нужен `multipart/related` (ручной заголовок + `CreatePart` без `Content-Disposition`).
+**Go pitfalls (`api/google/API.md` §16):**
+- `&oauth2.Token{RefreshToken: rt}` forces a refresh because of the **empty AccessToken**, not because of a zero Expiry: do not set a fake AccessToken.
+- `invalid_grant` arrives **lazily**: on the first Drive request, not from `Client()`. Hang the mapping to `ErrReauth` on the Drive call site.
+- `mime/multipart` writes `form-data`; Drive needs `multipart/related` (a manual header + `CreatePart` without `Content-Disposition`).
 
 ## 9. Compliance
 
-| Тема | Требование |
+| Topic | Requirement |
 |---|---|
-| **Google API Services User Data Policy** | Базовые обязательства для всех: точный запрос скоупа, минимум разрешений, опубликованная privacy policy с описанием работы с Google-данными, использование данных строго по policy. Строгий **Limited Use** (security assessment, запрет на передачу) — часть **restricted**-процесса; к non-sensitive `drive.file` в полном объёме **не применяется**. |
-| **Privacy policy** | Для brand verification — на том же домене, что homepage; раскрывает access/use/store/share Google user data; залинкована на consent. к Production проверить публикацию на `https://transcrib.example.com/privacy/`. |
-| **152-ФЗ** (угол, не юрконсультация) | ПД в Google-контексте: refresh-токен (косвенный идентификатор), email (если запрошен — в `drive.file`-сценарии не обязателен), содержимое доков (транскрипты = ПД участников). Минимизация: ровно `drive.file`, refresh-токен шифровать в БД (AES-GCM, продакшен-доводка — `db.md` §3.2 TODO), содержимое доков у себя не персистить. Трансграничная передача (Drive) и список субпроцессоров — в privacy policy + уведомление РКН (вопрос юристу/заказчику, не код). |
+| **Google API Services User Data Policy** | Baseline obligations for everyone: exact scope request, minimum permissions, a published privacy policy describing handling of Google data, use of data strictly per the policy. The strict **Limited Use** (security assessment, ban on transfer) is part of the **restricted** process; it does **not** apply in full to non-sensitive `drive.file`. |
+| **Privacy policy** | For brand verification: on the same domain as the homepage; discloses access/use/store/share of Google user data; linked from the consent screen. Before Production, check that it is published at `https://transcrib.example.com/privacy/`. |
+| **152-FZ** (an angle, not legal advice) | Personal data in the Google context: the refresh token (an indirect identifier), email (if requested; not required in the `drive.file` scenario), the content of the docs (transcripts are participants' personal data). Minimization: exactly `drive.file`, encrypt the refresh token in the DB (AES-GCM, production finalization: `db.md` §3.2 TODO), do not persist document content on our side. Cross-border transfer (Drive) and the subprocessor list go into the privacy policy + a notification to Roskomnadzor (a question for the lawyer/customer, not code). |
 
-## 10. Топ-ловушек (полный список — `api/google/API.md` §6/§10/§16)
+## 10. Top traps (full list: `api/google/API.md` §6/§10/§16)
 
-1. **refresh_token приходит ТОЛЬКО при первом согласии** — повторный OAuth без `prompt=consent` вернёт пустой refresh. Всегда слать `access_type=offline` + `prompt=consent`; если refresh пуст — не затирать им хранимый.
-2. **7-дневное протухание в Testing mode** — заложить `/reconnect` + монитор; снимается только Production.
-3. **`invalid_grant` ≠ `failed`** — это `awaiting_reauth` без отката резерва; прилетает лениво на первом Drive-запросе.
-4. **redirect_uri exact match** — схема/хост/порт/путь/слеш; единая константа в коде и Console.
-5. **multipart-upload без `?fields=` возвращает только `id`** — нет `webViewLink`. Добавлять `?fields=id,webViewLink`.
-6. **`multipart/related`, не `form-data`** — ручной заголовок запроса (Go `mime/multipart`).
-7. **Удалённая юзером папка → 404 на `parents`** — это НЕ `invalid_grant`. На MVP допустимо `failed`; later — пересоздавать папку.
-8. **Конвертация markdown** — целевой `mimeType: application/vnd.google-apps.document` + исходный `Content-Type: text/markdown`; `text/html` fallback.
+1. **refresh_token arrives ONLY on the first consent:** a repeated OAuth without `prompt=consent` returns an empty refresh token. Always send `access_type=offline` + `prompt=consent`; if the refresh token is empty, do not overwrite the stored one with it.
+2. **7-day expiry in Testing mode:** build in `/reconnect` + a monitor; it goes away only with Production.
+3. **`invalid_grant` is not `failed`:** it is `awaiting_reauth` without rolling back the reservation; it arrives lazily on the first Drive request.
+4. **redirect_uri exact match:** scheme/host/port/path/slash; a single constant in code and in the Console.
+5. **multipart upload without `?fields=` returns only `id`:** no `webViewLink`. Add `?fields=id,webViewLink`.
+6. **`multipart/related`, not `form-data`:** a manual request header (Go `mime/multipart`).
+7. **A folder deleted by the user gives 404 on `parents`:** this is NOT `invalid_grant`. In the MVP `failed` is acceptable; later, recreate the folder.
+8. **Markdown conversion:** target `mimeType: application/vnd.google-apps.document` + source `Content-Type: text/markdown`; `text/html` fallback.
 
-## 11. Открытые вопросы
+## 11. Open questions
 
-- **(монитор)** `google_accounts` без `last_refresh_at` — добавить колонку либо выбрать иной критерий тика. Решить при реализации монитора (F9-класс).
-- **(markdown)** Live-подтверждение `text/markdown`→Doc на реальном аккаунте (`about.importFormats`); fallback `text/html` (§6).
-- **(дефолт доставки)** В release 0.1 дефолт остается `telegram`. Вопрос смены дефолта на `google` возвращается только внутри отдельного post-0.1 Google-слайса после live Google-теста.
-- **(хранение `state`)** in-memory на MVP против мини-таблицы `oauth_states` (переживание рестарта в момент онбординга) — `plan-google-slice.md`.
+- **(monitor)** `google_accounts` has no `last_refresh_at`: add a column or pick another tick criterion. Decide when implementing the monitor (F9 class).
+- **(markdown)** Live confirmation of `text/markdown` to Doc on a real account (`about.importFormats`); fallback `text/html` (§6).
+- **(delivery default)** In release 0.1 the default stays `telegram`. Changing the default to `google` returns only inside a separate post-0.1 Google slice after the live Google test.
+- **(`state` storage)** in-memory in the MVP versus a small `oauth_states` table (surviving a restart in the middle of onboarding): `plan-google-slice.md`.
 
-## 12. Источники
+## 12. Sources
 
-Контракт и первоисточники Google (официальные `developers.google.com`/`support.google.com`, метки ✅/⚠) — [`docs/api/google/API.md`](api/google/API.md) §20. Здесь — только интеграционные решения; факты не дублируются.
+The contract and Google primary sources (official `developers.google.com`/`support.google.com`, marks [OK]/[!]): [`docs/api/google/API.md`](api/google/API.md) §20. Here only integration decisions; facts are not duplicated.

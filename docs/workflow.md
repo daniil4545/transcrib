@@ -1,173 +1,173 @@
 # Task workflow transcrib
 
-Проект на поддержке, поэтому здесь облегчённая модель: issue как исполнимая спека,
-команда `возьми #NN`, milestones в трекере. Отдельные спеки и фазовые гейты
-основного конвейера здесь не применяются.
+The project is in maintenance, so this is a lightweight model: an issue as an executable spec,
+the `take #NN` command, milestones in the tracker. Separate specs and phase gates
+of the main pipeline do not apply here.
 
-Канон разработки: задача оформляется как GitHub Issue, владелец даёт команду `возьми #NN`, агент
-доводит issue до PR в `dev`. Чат - оркестратор выполнения, GitHub Issue/PR - durable source of truth.
+Development canon: a task is written up as a GitHub Issue, the owner gives the command `take #NN`, the agent
+brings the issue to a PR into `dev`. The chat orchestrates execution, GitHub Issue/PR is the durable source of truth.
 
-## Ветки и deploy
+## Branches and deploy
 
-- `dev` - основная рабочая ветка. Merge в `dev` запускает CI/CD и deploy в Coolify dev.
-- `feature/<slug>` - ветка одной issue, всегда от актуального `dev`.
-- Параллельные issue выполняются в отдельных git worktree, по одному worktree на issue.
-- `main` - prod-кандидат, обновляется только через release PR `dev -> main`.
-- Release tag (`0.0.1`, `0.0.2`, `0.1.0`) - единственный ref для prod deploy.
-- Prod deploy - только ручной запуск GitHub Actions `Deploy` на tag с `target=prod`.
+- `dev` - the main working branch. A merge into `dev` triggers CI/CD and a deploy to Coolify dev.
+- `feature/<slug>` - the branch of one issue, always cut from the current `dev`.
+- Parallel issues run in separate git worktrees, one worktree per issue.
+- `main` - prod candidate, updated only through a release PR `dev -> main`.
+- A release tag (`0.0.1`, `0.0.2`, `0.1.0`) is the only ref for prod deploy.
+- Prod deploy is only a manual run of the GitHub Actions `Deploy` on a tag with `target=prod`.
 
-Запрещено без явной команды владельца: merge PR, prod deploy, env/secrets, live DB mutation,
+Forbidden without an explicit owner command: merging a PR, prod deploy, env/secrets, live DB mutation,
 refund/payment action, destructive git/file operations.
 
-## Основной цикл
+## Main loop
 
-1. Входящий баг/идея/замечание превращается в GitHub Issue.
-2. Агент расследует факты: docs, код, логи, БД/runtime при необходимости.
-3. Агент пишет issue как исполняемую спеку.
-4. Для рискованных issue Architect, Tester и code reviewer проверяют спеку до разработки; blockers
-   вносятся в issue.
-5. В отдельном execution-чате владелец пишет: `возьми #NN`.
-6. Агент выполняет issue до PR в `dev`, задает вопросы если видит проблемы.
-7. Для рискованных issue проходит acceptance review: тесты, логика, архитектура, интеграция с кодовой
-   базой и runtime, если он нужен.
-8. Владелец ревьюит PR и отдельно даёт команду на merge.
-9. После merge агент проверяет dev deploy, если задача требует runtime-проверки.
+1. An incoming bug/idea/remark becomes a GitHub Issue.
+2. The agent investigates the facts: docs, code, logs, DB/runtime if needed.
+3. The agent writes the issue as an executable spec.
+4. For risky issues, the Architect, Tester and code reviewer check the spec before development; blockers
+   go into the issue.
+5. In a separate execution chat the owner writes: `take #NN`.
+6. The agent executes the issue up to a PR into `dev` and asks questions if it sees problems.
+7. For risky issues an acceptance review runs: tests, logic, architecture, integration with the codebase
+   and runtime, if needed.
+8. The owner reviews the PR and separately gives the merge command.
+9. After the merge the agent checks the dev deploy, if the task needs a runtime check.
 
-## Issue как спека
+## Issue as a spec
 
-Команда владельца `возьми #NN` означает, что issue готова к выполнению. Лейбл `agent-ready` можно
-использовать как backlog-маркер, но агент не требует его, если команда дана явно. Отдельный
-документ-спека не заводится: issue самодостаточна.
+The owner command `take #NN` means the issue is ready for execution. The `agent-ready` label may be
+used as a backlog marker, but the agent does not require it if the command is given explicitly. No separate
+spec document is created: the issue is self-sufficient.
 
-Минимальная структура issue:
+Minimal issue structure:
 
-- Цель: какой результат нужен.
-- Контекст: почему делаем, ссылки на каноны, инциденты, PR.
-- Граница: что явно не трогаем.
-- Алгоритм действий: императивные шаги для агента.
-- Контракты: статусы, поля, функции, API, env, миграции, если меняются.
-- Критерии приемки: проверяемые условия.
-- Acceptance contract: инварианты и сценарии, которые защищают задачу. Если нужен автоматический
-  acceptance test, issue фиксирует имя/место теста, входные данные, ожидаемый результат и что нельзя
-  менять без согласования.
-- Проверки: точные команды, smoke/E2E или причина, почему они не выполняются.
-- Review gates: какие независимые проверки нужны перед merge: Tester, logic/domain, Architect,
-  code review, DevOps/runtime. Для простой правки можно указать `не нужны`.
-- Docs: какие каноны обновить или явно `docs не меняются`.
-- Stop conditions: когда агент обязан остановиться.
-- PR DoD: что должно быть в описании PR.
+- Goal: what result is needed.
+- Context: why we do it, links to canons, incidents, PRs.
+- Boundary: what we explicitly do not touch.
+- Action algorithm: imperative steps for the agent.
+- Contracts: statuses, fields, functions, API, env, migrations, if they change.
+- Acceptance criteria: verifiable conditions.
+- Acceptance contract: invariants and scenarios that protect the task. If an automatic
+  acceptance test is needed, the issue fixes the test name/location, input data, expected result and what must not be
+  changed without agreement.
+- Checks: exact commands, smoke/E2E or the reason they are not run.
+- Review gates: which independent checks are needed before merge: Tester, logic/domain, Architect,
+  code review, DevOps/runtime. For a simple fix you may write `not needed`.
+- Docs: which canons to update or explicitly `docs unchanged`.
+- Stop conditions: when the agent must stop.
+- PR DoD: what the PR description must contain.
 
-Если issue слишком большая, агент не реализует её одним diff. Он режет её на sub-issues с
-самостоятельной приемкой и зависимостями. Команда `возьми #NN` на umbrella issue разрешает
-декомпозицию, но код начинается только по отдельному sub-issue после команды владельца.
-Трекер milestones при этом остаётся milestone-level.
+If an issue is too large, the agent does not implement it in one diff. It splits it into sub-issues with
+independent acceptance and dependencies. The command `take #NN` on an umbrella issue allows
+decomposition, but code starts only on a separate sub-issue after the owner's command.
+The milestones tracker stays at milestone level.
 
-Критерии большой issue: деньги, квоты, state machine, миграции, внешний API, provider runtime,
-deploy/env, prod, много модулей или diff, который трудно быстро ревьюить.
+Criteria of a large issue: money, quotas, state machine, migrations, external API, provider runtime,
+deploy/env, prod, many modules or a diff that is hard to review quickly.
 
-Acceptance contract должен появляться до реализации. Тесты из него не являются "тестами агента",
-который пишет код: это часть спеки. Если контракт неверный или конфликтует с реальным кодом/канонами,
-implementation-agent останавливается и предлагает поправку issue, а не переписывает тест под код.
+The acceptance contract must appear before implementation. Tests from it are not the "tests of the agent"
+that writes the code: they are part of the spec. If the contract is wrong or conflicts with the real code/canons,
+the implementation agent stops and proposes a fix to the issue instead of rewriting the test to fit the code.
 
-## Выполнение issue
+## Issue execution
 
-Агент-оркестратор в execution-чате:
+The orchestrator agent in the execution chat:
 
-1. Проверяет `gh`/git доступ и актуальный `dev`.
-2. Читает issue body, comments, связанные каноны.
-3. Создаёт или открывает dedicated worktree и ветку `feature/<issue-slug>` от `dev`.
-4. Делит работу на подзадачи и назначает исполнителей только если это нужно.
-5. Если issue требует независимый acceptance test, он пишется до implementation diff отдельным
-   агентом/коммитом или явно фиксируется как ручной smoke.
-6. Реализует минимальный diff по issue, без соседних улучшений.
-7. Не удаляет и не ослабляет acceptance tests без явного решения владельца в issue/PR.
-8. Запускает проверки из issue и дополнительные проверки по риску (субагентное ревью).
-9. Обновляет docs только если изменился факт, контракт, процесс, runtime или deploy.
-10. Делает commit и push feature-ветки.
-11. Открывает PR в `dev`.
-12. Заполняет PR: summary, issue/spec compliance, verification, acceptance review, risks, not tested.
+1. Checks `gh`/git access and the current `dev`.
+2. Reads the issue body, comments, related canons.
+3. Creates or opens a dedicated worktree and the branch `feature/<issue-slug>` from `dev`.
+4. Splits the work into subtasks and assigns executors only if needed.
+5. If the issue requires an independent acceptance test, it is written before the implementation diff by a separate
+   agent/commit or explicitly recorded as a manual smoke.
+6. Implements the minimal diff for the issue, without adjacent improvements.
+7. Does not delete or weaken acceptance tests without an explicit owner decision in the issue/PR.
+8. Runs the checks from the issue and extra checks by risk (subagent review).
+9. Updates docs only if a fact, contract, process, runtime or deploy changed.
+10. Commits and pushes the feature branch.
+11. Opens a PR into `dev`.
+12. Fills in the PR: summary, issue/spec compliance, verification, acceptance review, risks, not tested.
 
-Агент не спрашивает владельца по ходу работы, если issue содержит достаточную спеку и нет stop
-condition. Найденные соседние проблемы оформляются follow-up issue, а не чинятся в текущем diff.
+The agent does not ask the owner during the work if the issue contains a sufficient spec and there is no stop
+condition. Adjacent problems found are filed as follow-up issues, not fixed in the current diff.
 
-## Параллельная работа
+## Parallel work
 
-Можно вести несколько issue одновременно в разных чатах. Каждый execution-чат работает только в
-своём worktree и своей ветке:
+Several issues can run at once in different chats. Each execution chat works only in
+its own worktree and its own branch:
 
 ```text
 ../transcrib-issue-NN   -> feature/issue-NN-<slug>
 ../transcrib-issue-MM   -> feature/issue-MM-<slug>
 ```
 
-Правила:
+Rules:
 
-- перед правками агент проверяет `git status` и текущий worktree;
-- один агент не правит файлы в worktree другого агента;
-- общий repo checkout не используется для параллельной реализации;
-- если нужный worktree уже занят другой issue, агент создаёт новый или останавливается;
-- пересечения между задачами не резолвятся локально "заодно";
-- расхождения веток решаются на этапе PR: rebase/merge от свежего `dev`, review и conflict resolution.
+- before edits the agent checks `git status` and the current worktree;
+- one agent does not edit files in another agent's worktree;
+- the shared repo checkout is not used for parallel implementation;
+- if the needed worktree is already taken by another issue, the agent creates a new one or stops;
+- overlaps between tasks are not resolved locally "while at it";
+- branch divergences are resolved at the PR stage: rebase/merge from a fresh `dev`, review and conflict resolution.
 
-Почему так: изоляция worktree убирает случайное смешивание diff, а PR остаётся нормальным местом для
-разрешения конфликтов между независимыми задачами.
+Why: worktree isolation removes accidental mixing of diffs, and the PR stays the normal place for
+resolving conflicts between independent tasks.
 
-## Роли агентов
+## Agent roles
 
-- Orchestrator: ведёт чат, держит границы issue, принимает отчёты, делает git/GitHub действия.
-- Worker: пишет узкий кодовый кусок по заданным файлам и контрактам.
-- Tester: независимо фиксирует и проверяет acceptance tests/smoke, edge cases, race/idempotency,
-  критические сценарии.
-- Code reviewer: ищет баги, лишний код, слабые тесты, несоответствие issue.
-- Architect: проверяет архитектуру, БД, деньги, state machine, provider/deploy контракты.
-- DevOps: server, DB, Docker, deploy/runtime через `deploy/safe-ssh.sh`.
-- Docs auditor: docs sync, если изменились каноны или runtime facts.
+- Orchestrator: runs the chat, holds the issue boundaries, accepts reports, performs git/GitHub actions.
+- Worker: writes a narrow piece of code for the given files and contracts.
+- Tester: independently records and checks acceptance tests/smoke, edge cases, race/idempotency,
+  critical scenarios.
+- Code reviewer: looks for bugs, extra code, weak tests, mismatch with the issue.
+- Architect: checks architecture, DB, money, state machine, provider/deploy contracts.
+- DevOps: server, DB, Docker, deploy/runtime via `deploy/safe-ssh.sh`.
+- Docs auditor: docs sync, if canons or runtime facts changed.
 
-По умолчанию orchestrator делает всё сам. Subagents подключаются только по риску или когда это прямо
-указано в issue.
+By default the orchestrator does everything itself. Subagents are engaged only by risk or when the issue
+says so directly.
 
-Для денег, квот, state machine, миграций, provider runtime, deploy/env и prod-gates implementation и
-acceptance должны быть разделены: код пишет Worker, приемку проверяет отдельный Tester/reviewer. Для
-мелких правок достаточно самопроверки orchestrator'а, если issue прямо не требует review gates.
+For money, quotas, state machine, migrations, provider runtime, deploy/env and prod gates, implementation and
+acceptance must be separated: the Worker writes the code, a separate Tester/reviewer checks acceptance. For
+small fixes the orchestrator's self-check is enough, unless the issue directly requires review gates.
 
-## Проверка
+## Verification
 
-Перед PR агент обязан явно зафиксировать:
+Before the PR the agent must explicitly record:
 
 ```text
-Проверено:
+Verified:
 - go test ...: pass
 - go vet ./...: pass
-- manual E2E: не запускался, причина ...
+- manual E2E: not run, reason ...
 ```
 
-Для Go-изменений, которые затрагивают `internal/app`, state machine, БД, provider, billing,
-deploy/config или runtime-поведение, локальный gate должен соответствовать CI:
+For Go changes that touch `internal/app`, the state machine, DB, provider, billing,
+deploy/config or runtime behavior, the local gate must match CI:
 
 ```sh
 cd src
 NO_DOTENV=1 DATABASE_URL=postgres://transcrib:transcrib@localhost:5432/transcrib?sslmode=disable make ci-check
 ```
 
-`go test ./...` без `DATABASE_URL` не считается полным gate: DB-backed тесты пропускаются.
-`NO_DOTENV=1` нужен AI-агентам в sandbox, чтобы не читать локальные `.env` с секретами.
-Deploy workflow обязан гонять тот же DB-backed gate до сборки image, иначе dev/prod rollout не
-считается защищённым.
+`go test ./...` without `DATABASE_URL` does not count as a full gate: DB-backed tests are skipped.
+`NO_DOTENV=1` is needed for AI agents in a sandbox so they do not read local `.env` files with secrets.
+The deploy workflow must run the same DB-backed gate before building the image, otherwise a dev/prod rollout
+is not considered protected.
 
-Для критических узлов нужны targeted tests: деньги, резерв квоты, идемпотентность, state machine,
-гонки. Для Telegram UI, provider runtime, deploy и config допустим ручной E2E или dev smoke.
+Critical nodes need targeted tests: money, quota reserve, idempotency, state machine,
+races. For Telegram UI, provider runtime, deploy and config a manual E2E or dev smoke is acceptable.
 
-Acceptance tests, зафиксированные в issue, нельзя менять в implementation PR без явного согласования.
-Если тест меняется, PR обязан объяснить, какой контракт изменился и где это согласовано.
+Acceptance tests recorded in the issue must not be changed in an implementation PR without explicit agreement.
+If a test changes, the PR must explain which contract changed and where it was agreed.
 
-Задача не закрыта, если критерии приемки и review gates из issue не проверены или непроверенные пункты
-не названы явно.
+A task is not closed if the acceptance criteria and review gates from the issue are not checked, or unchecked items
+are not named explicitly.
 
-## Контекст и длинные задачи
+## Context and long tasks
 
-GitHub Issue и PR хранят состояние работы. Чат не является единственным источником правды.
+GitHub Issue and PR hold the state of the work. The chat is not the only source of truth.
 
-Если задача длинная, перед compact или паузой агент пишет checkpoint в issue comment:
+If the task is long, before a compact or a pause the agent writes a checkpoint in an issue comment:
 
 ```text
 Branch:
@@ -178,35 +178,35 @@ Open risks:
 Next step:
 ```
 
-После compact или в новом чате агент продолжает из issue + последнего checkpoint.
+After a compact or in a new chat the agent continues from the issue + the last checkpoint.
 
-Для execution-чата цель формулируется так: `довести issue #NN до PR в dev`. Goal mode помогает
-вести сессию, но не заменяет issue.
+For an execution chat the goal is phrased as: `bring issue #NN to a PR into dev`. Goal mode helps
+drive the session but does not replace the issue.
 
-## Закрытие PR
+## Closing a PR
 
-PR готов к owner review, если:
+A PR is ready for owner review if:
 
-- scope совпадает с issue;
-- CI/local checks зелёные или исключения явно объяснены;
-- acceptance contract выполнен, а его тесты не ослаблены без согласования;
-- review gates из issue пройдены: Tester, logic/domain, Architect, code review, DevOps/runtime или
-  явно `не нужно`;
-- docs синхронизированы, если менялся контракт;
-- в PR перечислены риски и непроверенные пункты;
-- нет blockers от reviewer/architect/tester.
+- the scope matches the issue;
+- CI/local checks are green or exceptions are explicitly explained;
+- the acceptance contract is satisfied and its tests are not weakened without agreement;
+- the review gates from the issue are passed: Tester, logic/domain, Architect, code review, DevOps/runtime or
+  explicitly `not needed`;
+- docs are synchronized if a contract changed;
+- the PR lists risks and unchecked items;
+- there are no blockers from the reviewer/architect/tester.
 
-Merge в `dev` выполняется только по явной команде владельца. После merge агент проверяет GitHub
-Actions и Coolify dev, если задача требует runtime-проверки.
+Merge into `dev` happens only on an explicit owner command. After the merge the agent checks GitHub
+Actions and Coolify dev, if the task needs a runtime check.
 
 ## Release
 
-Release - отдельная задача:
+A release is a separate task:
 
-1. Собрать release PR `dev -> main`.
-2. Сверить вошедшие issue/PR.
-3. Проверить, что в вошедших рискованных issue acceptance contract и review gates закрыты.
-4. Пройти нужные smoke-тесты и `deploy/verify-deploy.sh`.
-5. Зафиксировать release acceptance report: SHA, issues/PRs, проверки, runtime-smoke, риски, rollback.
-6. Merge в `main` не выкатывает prod.
-7. Prod deploy только по tag и явной команде владельца.
+1. Assemble the release PR `dev -> main`.
+2. Reconcile the included issues/PRs.
+3. Check that the acceptance contract and review gates are closed in the included risky issues.
+4. Run the needed smoke tests and `deploy/verify-deploy.sh`.
+5. Record the release acceptance report: SHA, issues/PRs, checks, runtime smoke, risks, rollback.
+6. A merge into `main` does not roll out prod.
+7. Prod deploy only by tag and an explicit owner command.

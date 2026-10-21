@@ -15,21 +15,21 @@ import (
 	tele "gopkg.in/telebot.v4"
 )
 
-// payloadPrefix — префикс invoice_payload, связывающий pre_checkout с successful_payment.
-// Формат "sub:<userID>": кодирует владельца платежа, валидируется in-memory без БД (§5.5).
+// payloadPrefix is the invoice_payload prefix linking pre_checkout to successful_payment.
+// Format "sub:<userID>": encodes the payment owner, validated in memory without the DB (§5.5).
 const payloadPrefix = "sub:"
 
-// Billing — платёжная обвязка F7 core: сборка инвойса (ловушка двух валютных
-// единиц), in-memory валидация pre_checkout, маппинг successful_payment в storage.
-// Не интерфейс: ЮKassa одна, второй реализации нет (принцип 4). Тонкий — весь SQL
-// в storage.go (payments.md, plan §«Согласованные решения»).
+// Billing is the F7 core payment wrapper: invoice assembly (the two-currency-unit
+// trap), in-memory pre_checkout validation, mapping successful_payment to storage.
+// Not an interface: there is one YooKassa and no second implementation (principle 4). Thin: all SQL
+// lives in storage.go (payments.md, plan section "Agreed decisions").
 type Billing struct {
 	storage                      *Storage
 	providerToken                string
 	priceKopecks                 int64
 	subscriptionMinutesPerPeriod int
 	vatCode                      int
-	taxSystemCode                int // 0 = поле tax_system_code в receipt НЕ добавляем (API.md §9.1)
+	taxSystemCode                int // 0 = do NOT add the tax_system_code field to the receipt (API.md §9.1)
 	paymentSubject               string
 	paymentMode                  string
 	receiptMeasure               string
@@ -84,8 +84,8 @@ func NewBilling(cfg Config, s *Storage) *Billing {
 	}
 }
 
-// Enabled сообщает, включён ли реальный приём оплаты по прямой ссылке ЮKassa.
-// Telegram providerToken остаётся только для legacy sendInvoice-тестов.
+// Enabled reports whether real payment acceptance via a direct YooKassa link is on.
+// The Telegram providerToken remains only for legacy sendInvoice tests.
 func (b *Billing) Enabled() bool {
 	return b.CanCreatePayment()
 }
@@ -98,16 +98,16 @@ func (b *Billing) CanPollPayments() bool {
 	return b.yookassaShopID != "" && b.yookassaSecretKey != "" && b.yookassaBaseURL != ""
 }
 
-// BuildInvoice собирает sendInvoice-инвойс с чеком 54-ФЗ.
+// BuildInvoice assembles a sendInvoice invoice with a 54-FZ receipt.
 //
-// КРИТИЧНАЯ ЛОВУШКА ДВУХ ВАЛЮТНЫХ ЕДИНИЦ (payments.md §4.4, API.md §9): в одном
-// инвойсе цена идёт в ДВУХ формах — Prices[].Amount в КОПЕЙКАХ целым (199000), а
-// в receipt.items[].amount.value РУБЛЯМИ строкой с двумя знаками ("1990.00").
-// Перепутать = чек на 19.90 при оплате 1990. Конвертация — целочисленная
-// (kopecksToRubles), без float, чтобы не потерять точность на копейках.
+// CRITICAL TWO-CURRENCY-UNIT TRAP (payments.md §4.4, API.md §9): within one
+// invoice the price comes in TWO forms: Prices[].Amount in KOPECKS as an integer (199000), and
+// in receipt.items[].amount.value in RUBLES as a string with two decimals ("1990.00").
+// Mixing them up = a receipt for 19.90 when 1990 is paid. The conversion is integer
+// (kopecksToRubles), no float, so kopeck precision is not lost.
 //
-// customer/email в provider_data НЕ кладём: NeedEmail+SendEmail заставляют Telegram
-// собрать email в форме оплаты и самому проставить customer в чек (зашить пустой = ошибка).
+// We do NOT put customer/email in provider_data: NeedEmail+SendEmail make Telegram
+// collect the email in the payment form and set the customer in the receipt itself (hard-coding an empty one is an error).
 func (b *Billing) BuildInvoice(userID int64) *tele.Invoice {
 	return &tele.Invoice{
 		Token:       b.providerToken,
@@ -116,7 +116,7 @@ func (b *Billing) BuildInvoice(userID int64) *tele.Invoice {
 		Payload:     payloadPrefix + strconv.FormatInt(userID, 10),
 		Currency:    "RUB",
 		Start:       "subscribe",
-		// Amount тип int (telebot.v4): явный каст из int64-копеек.
+		// Amount is of type int (telebot.v4): explicit cast from int64 kopecks.
 		Prices:    []tele.Price{{Label: b.title, Amount: int(b.priceKopecks)}},
 		Data:      b.providerData(),
 		NeedEmail: true,
@@ -124,9 +124,9 @@ func (b *Billing) BuildInvoice(userID int64) *tele.Invoice {
 	}
 }
 
-// providerData сериализует receipt 54-ФЗ в JSON-строку для Telegram (поле provider_data).
-// value — рубли строкой (см. ловушку в BuildInvoice). tax_system_code добавляем
-// только при taxSystemCode>0: при одной СНО поле = ошибка фискализации (API.md §9.1/§10.2).
+// providerData serializes the 54-FZ receipt to a JSON string for Telegram (provider_data field).
+// value is rubles as a string (see the trap in BuildInvoice). tax_system_code is added
+// only when taxSystemCode>0: with a single tax system the field = a fiscalization error (API.md §9.1/§10.2).
 func (b *Billing) providerData() string {
 	item := map[string]any{
 		"description":     b.description,
@@ -141,13 +141,13 @@ func (b *Billing) providerData() string {
 		receipt["tax_system_code"] = b.taxSystemCode
 	}
 	data := map[string]any{"receipt": receipt}
-	// json.Marshal на map[string]any с заданными типами ключей не падает; ошибку
-	// игнорировать нельзя по стандартам — но здесь источник данных контролируемый.
+	// json.Marshal on a map[string]any with the given key types does not fail; by standards the error
+	// must not be ignored, but here the data source is controlled.
 	raw, err := json.Marshal(data)
 	if err != nil {
-		// Недостижимо при текущем составе data (нет каналов/функций); логировать
-		// нечем (нет ctx), вернуть пустую строку безопаснее паники — Telegram
-		// отклонит инвойс без чека, ошибка станет видна в E2E.
+		// Unreachable with the current data (no channels/functions); there is nothing to
+		// log with (no ctx), returning an empty string is safer than panicking: Telegram
+		// rejects an invoice without a receipt and the error becomes visible in E2E.
 		return ""
 	}
 	return string(raw)
@@ -362,9 +362,9 @@ func (b *Billing) directReceipt(email string) map[string]any {
 	return receipt
 }
 
-// CreateRefund делает только низкоуровневый REST-вызов ЮKassa. Storage-фазы
-// BeginRefund/FinalizeRefund остаются снаружи, чтобы ретраи и admin-flow решались
-// на уровне сценария, а не HTTP-хелпера.
+// CreateRefund makes only the low-level YooKassa REST call. The storage phases
+// BeginRefund/FinalizeRefund stay outside so that retries and the admin flow are decided
+// at the scenario level, not in the HTTP helper.
 func (b *Billing) CreateRefund(ctx context.Context, providerChargeID string, amountKopecks int64, idemKey string) (RefundResult, error) {
 	if err := b.validateYookassaConfig("create refund"); err != nil {
 		return RefundResult{}, err
@@ -502,8 +502,8 @@ func parseYookassaRefundStatus(status string) (RefundStatus, error) {
 	}
 }
 
-// kopecksToRubles форматирует копейки в рубли-строку "<руб>.<коп>" (две цифры копеек).
-// Целочисленно (НЕ float): float64 округлил бы крупные суммы и сломал чек.
+// kopecksToRubles formats kopecks into a rubles string "<rub>.<kop>" (two kopeck digits).
+// Integer-based (NOT float): float64 would round large amounts and break the receipt.
 func kopecksToRubles(kopecks int64) string {
 	return fmt.Sprintf("%d.%02d", kopecks/100, kopecks%100)
 }
@@ -527,8 +527,8 @@ func rublesToKopecks(value string) (int64, error) {
 	return rub*100 + kop, nil
 }
 
-// ValidatePreCheckout — ТОЛЬКО in-memory проверка формата payload (§5.5, ≤500мс):
-// префикс "sub:" + парсится userID. Без БД — бизнес-логика подписки в successful_payment.
+// ValidatePreCheckout is an in-memory-ONLY payload format check (§5.5, <=500ms):
+// the "sub:" prefix + userID parsing. No DB: subscription business logic is in successful_payment.
 func (b *Billing) ValidatePreCheckout(payload string) bool {
 	if !strings.HasPrefix(payload, payloadPrefix) {
 		return false
@@ -537,14 +537,14 @@ func (b *Billing) ValidatePreCheckout(payload string) bool {
 	return err == nil && id > 0
 }
 
-// RecordPayment маппит успешный tele.Payment в PaymentInput и пишет платёж+подписку
-// (§5.4, идемпотентно по telegram_payment_charge_id). raw_payload — сырой платёж для
-// аудита/fallback-lookup; metadata и provider_paid_at на MVP nil (telebot их не даёт).
+// RecordPayment maps a successful tele.Payment to PaymentInput and writes the payment+subscription
+// (§5.4, idempotent by telegram_payment_charge_id). raw_payload is the raw payment for
+// audit/fallback lookup; metadata and provider_paid_at are nil in the MVP (telebot does not provide them).
 //
-// user_id берётся из payerID (аутентифицированный c.Sender) — он авторитетен. Payload
-// формируется нами на сервере (BuildInvoice) и эхо-возвращается Telegram дословно,
-// клиент его не подделает; но если payer и владелец payload разошлись (битый инвойс /
-// будущая правка) — это аномалия, платёж не зачисляем вслепую (defense-in-depth).
+// user_id is taken from payerID (the authenticated c.Sender), which is authoritative. The payload
+// is built by us on the server (BuildInvoice) and echoed back by Telegram verbatim,
+// so a client cannot forge it; but if the payer and the payload owner diverge (broken invoice /
+// a future edit) it is an anomaly and we do not credit the payment blindly (defense-in-depth).
 func (b *Billing) RecordPayment(ctx context.Context, payerID int64, p *tele.Payment) error {
 	payloadID, err := userIDFromPayload(p.Payload)
 	if err != nil {
@@ -569,7 +569,7 @@ func (b *Billing) RecordPayment(ctx context.Context, payerID int64, p *tele.Paym
 	return b.storage.RecordSuccessfulPayment(ctx, in, b.subscriptionMinutesPerPeriod)
 }
 
-// userIDFromPayload извлекает владельца платежа из invoice_payload (формат "sub:<userID>").
+// userIDFromPayload extracts the payment owner from invoice_payload (format "sub:<userID>").
 func userIDFromPayload(payload string) (int64, error) {
 	if !strings.HasPrefix(payload, payloadPrefix) {
 		return 0, fmt.Errorf("invalid payment payload: missing prefix")

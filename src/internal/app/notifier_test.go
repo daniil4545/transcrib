@@ -10,21 +10,21 @@ import (
 	"time"
 )
 
-// Критический инвариант F9 (db.md §5.6, architecture.md §7.2): ДЕДУП — ровно один
-// пуш на ситуацию, не на каждый тик. Тестируем storage-выборки в связке с Mark*:
-// (выбран) -> Mark -> (НЕ выбран). Для подписочных классов §5.6 дедуп держится на
-// COALESCE(MAX(paid_at)): после НОВОГО платежа (paid_at позже notified) юзер снова
-// попадает в выборку — иначе продливший подписку юзер не получил бы новый пуш.
-// Run-цикл Notifier и сам send (bot.SendText) — клей, ручной E2E (docs/testing.md).
-// Интеграционные: бьют в настоящий Postgres через DATABASE_URL; без него — Skip.
+// Critical invariant F9 (db.md §5.6, architecture.md §7.2): DEDUP means exactly one
+// push per situation, not one per tick. We test the storage selections together with Mark*:
+// (selected) -> Mark -> (NOT selected). For the subscription classes of §5.6 the dedup relies on
+// COALESCE(MAX(paid_at)): after a NEW payment (paid_at later than notified) the user is
+// selected again, otherwise a user who renewed would not get a new push.
+// The Notifier Run loop and send itself (bot.SendText) are glue, covered by manual E2E (docs/testing.md).
+// Integration tests: they hit a real Postgres via DATABASE_URL; without it they Skip.
 
-// insertSubscriptionExpiring вставляет активную подписку (minutes_balance>0) с заданным
-// expires_at = now()+expiresOffset. insertSubscription из storage_quota_test жёстко
-// задаёт +30 дней, а F9 нужен контроль конца покрытия (окно 3-4 дня / прошлое).
+// insertSubscriptionExpiring inserts an active subscription (minutes_balance>0) with the given
+// expires_at = now()+expiresOffset. insertSubscription from storage_quota_test hardcodes
+// +30 days, while F9 needs control over the end of coverage (3-4 day window / the past).
 func insertSubscriptionExpiring(t *testing.T, s *Storage, userID int64, balance int, expiresOffset string) {
 	t.Helper()
-	// CHECK (expires_at > paid_at): paid_at = end of coverage минус 1 месяц, иначе
-	// для истёкшей подписки (expires в прошлом) paid_at=now() нарушил бы инвариант.
+	// CHECK (expires_at > paid_at): paid_at = end of coverage minus 1 month, otherwise
+	// for an expired subscription (expires in the past) paid_at=now() would violate the invariant.
 	_, err := s.pool.Exec(context.Background(),
 		`INSERT INTO subscriptions (
 		     user_id, paid_at, expires_at, meetings_limit, meetings_balance, minutes_limit, minutes_balance
@@ -85,10 +85,10 @@ func insertActivePaidJob(t *testing.T, s *Storage, userID, subID int64, status s
 	})
 }
 
-// insertSucceededPayment вставляет succeeded-платёж с paid_at=now() (момент вызова).
-// Дедуп §5.6 сравнивает notified_at с MAX(paid_at): платёж, вставленный ПОСЛЕ Mark,
-// несёт более поздний paid_at и снова открывает выборку. charge_id обязателен
-// (CHECK §5.4) и уникален (UNIQUE) — формируем из userID+tag.
+// insertSucceededPayment inserts a succeeded payment with paid_at=now() (the call moment).
+// The §5.6 dedup compares notified_at with MAX(paid_at): a payment inserted AFTER Mark
+// carries a later paid_at and reopens the selection. charge_id is required
+// (CHECK §5.4) and unique (UNIQUE), so we build it from userID+tag.
 func insertSucceededPayment(t *testing.T, s *Storage, userID int64, tag string) {
 	t.Helper()
 	_, err := s.pool.Exec(context.Background(),
@@ -121,9 +121,9 @@ func fmtChargeID(userID int64, tag string) string {
 	return "f9-" + tag + "-" + strconv.FormatInt(userID, 10)
 }
 
-// hasUser проверяет вхождение userID в результат глобальной F9-выборки. Выборки
-// глобальны (вся БД), в dev могут лежать чужие строки — фильтруем по своему id,
-// как mustClaim в storage_test.go.
+// hasUser checks that userID is in the result of a global F9 selection. Selections
+// are global (whole DB), and a dev DB may hold foreign rows, so we filter by our own id,
+// like mustClaim in storage_test.go.
 func hasUser(ids []int64, userID int64) bool {
 	for _, id := range ids {
 		if id == userID {
@@ -148,13 +148,13 @@ func nudgeEventCount(t *testing.T, s *Storage, userID int64, class string) int {
 	return count
 }
 
-// =========================== UNIT: send->mark (без БД) ===========================
+// =========================== UNIT: send->mark (no DB) ===========================
 
-// TestNotifyGroup_SendThenMark — §5.6 порядок «send потом mark» в notifyGroup. Это
-// решающая для дедупа развилка: при сбое notify отметку НЕ ставим (пуш потеряется —
-// повторим на следующем тике), при успехе — ставим (иначе спам каждый тик). Выборки
-// тестируются интеграционно выше; здесь — чистая логика воркера на фейках fetch/notify/
-// mark, без БД (n.storage не трогается в notifyGroup). architecture.md §7.2 / db.md §5.6.
+// TestNotifyGroup_SendThenMark covers the §5.6 "send, then mark" order in notifyGroup. This is
+// the decisive fork for dedup: when notify fails we do NOT mark (the push is lost, we
+// retry on the next tick); on success we mark (otherwise spam on every tick). Selections
+// are tested by the integration tests above; here is pure worker logic on fake fetch/notify/
+// mark, without a DB (n.storage is not touched in notifyGroup). architecture.md §7.2 / db.md §5.6.
 func TestNotifyGroup_SendThenMark(t *testing.T) {
 	ctx := context.Background()
 
@@ -167,13 +167,13 @@ func TestNotifyGroup_SendThenMark(t *testing.T) {
 		n.notifyGroup(ctx, "test", fetch, "txt", mark)
 
 		if len(marked) != 2 || marked[0] != 10 || marked[1] != 20 {
-			t.Errorf("marked = %v, ожидали [10 20] (успешный send -> mark каждого)", marked)
+			t.Errorf("marked = %v, want [10 20] (successful send -> mark of each)", marked)
 		}
 	})
 
 	t.Run("send_fails_no_mark", func(t *testing.T) {
 		var marked []int64
-		// notify падает на всех -> mark не должен вызваться ни разу (continue до mark).
+		// notify fails for all -> mark must never be called (continue before mark).
 		n := NewNotifier(nil, func(int64, string) error { return errors.New("tg down") }, 3, time.Hour)
 		fetch := func(context.Context, int) ([]int64, error) { return []int64{10, 20}, nil }
 		mark := func(_ context.Context, uid int64) error { marked = append(marked, uid); return nil }
@@ -181,13 +181,13 @@ func TestNotifyGroup_SendThenMark(t *testing.T) {
 		n.notifyGroup(ctx, "test", fetch, "txt", mark)
 
 		if len(marked) != 0 {
-			t.Errorf("marked = %v, ожидали пусто (сбой notify не должен отмечать — пуш потеряется, повторим)", marked)
+			t.Errorf("marked = %v, want empty (a notify failure must not mark: the push is lost, we retry)", marked)
 		}
 	})
 
 	t.Run("partial_send_failure_marks_only_delivered", func(t *testing.T) {
-		// notify падает только для uid=10; uid=20 доставлен. Инвариант: помечен ровно 20
-		// (потерянный пуш 10 повторится на следующем тике, дедуп выборки его не маскирует).
+		// notify fails only for uid=10; uid=20 is delivered. Invariant: exactly 20 is marked
+		// (the lost push for 10 repeats on the next tick, the selection dedup does not mask it).
 		var mu sync.Mutex
 		var marked []int64
 		notify := func(uid int64, _ string) error {
@@ -208,7 +208,7 @@ func TestNotifyGroup_SendThenMark(t *testing.T) {
 		n.notifyGroup(ctx, "test", fetch, "txt", mark)
 
 		if len(marked) != 1 || marked[0] != 20 {
-			t.Errorf("marked = %v, ожидали [20] (помечаем только доставленного)", marked)
+			t.Errorf("marked = %v, want [20] (mark only the delivered one)", marked)
 		}
 	})
 }
@@ -244,7 +244,7 @@ func TestPaymentViewedWithoutPaidUsers_Dedup(t *testing.T) {
 		t.Fatalf("PaymentViewedWithoutPaidUsers #1: %v", err)
 	}
 	if !hasUser(ids, followupUser) {
-		t.Fatal("юзер с просмотром оплаты старше 24 часов не попал в payment followup")
+		t.Fatal("user with a payment view older than 24 hours was not selected for payment followup")
 	}
 
 	if err := s.MarkNudgeSent(ctx, followupUser, nudgePaymentFollowup); err != nil {
@@ -255,7 +255,7 @@ func TestPaymentViewedWithoutPaidUsers_Dedup(t *testing.T) {
 		t.Fatalf("PaymentViewedWithoutPaidUsers #2: %v", err)
 	}
 	if hasUser(ids, followupUser) {
-		t.Error("после nudge_sent payment_followup юзер снова в выборке")
+		t.Error("user is selected again after nudge_sent payment_followup")
 	}
 
 	paidUser := newTestUser(t, s)
@@ -268,7 +268,7 @@ func TestPaymentViewedWithoutPaidUsers_Dedup(t *testing.T) {
 		t.Fatalf("PaymentViewedWithoutPaidUsers #3: %v", err)
 	}
 	if hasUser(ids, paidUser) {
-		t.Error("юзер с succeeded-платежом после просмотра оплаты попал в payment followup")
+		t.Error("user with a succeeded payment after the payment view was selected for payment followup")
 	}
 
 	activeUser := newTestUser(t, s)
@@ -280,7 +280,7 @@ func TestPaymentViewedWithoutPaidUsers_Dedup(t *testing.T) {
 		t.Fatalf("PaymentViewedWithoutPaidUsers #4: %v", err)
 	}
 	if hasUser(ids, activeUser) {
-		t.Error("юзер с активной подпиской попал в payment followup")
+		t.Error("user with an active subscription was selected for payment followup")
 	}
 }
 
@@ -297,7 +297,7 @@ func TestSubLowBalanceUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubLowBalanceUsers #1: %v", err)
 	}
 	if !hasUser(ids, userID) {
-		t.Fatal("платящий юзер с остатком меньше часа не попал в SubLowBalanceUsers")
+		t.Fatal("paying user with less than an hour left was not selected in SubLowBalanceUsers")
 	}
 
 	if err := s.MarkNudgeSent(ctx, userID, nudgeSubLowBalance); err != nil {
@@ -308,7 +308,7 @@ func TestSubLowBalanceUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubLowBalanceUsers #2: %v", err)
 	}
 	if hasUser(ids, userID) {
-		t.Error("после nudge_sent sub_low_balance юзер снова в выборке")
+		t.Error("user is selected again after nudge_sent sub_low_balance")
 	}
 
 	activeJobUser := newTestUser(t, s)
@@ -322,7 +322,7 @@ func TestSubLowBalanceUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubLowBalanceUsers #3: %v", err)
 	}
 	if hasUser(ids, activeJobUser) {
-		t.Error("юзер с low balance из-за активного платного резерва попал в SubLowBalanceUsers")
+		t.Error("user with low balance due to an active paid reserve was selected in SubLowBalanceUsers")
 	}
 }
 
@@ -339,7 +339,7 @@ func TestSubEmptyBalanceUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubEmptyBalanceUsers #1: %v", err)
 	}
 	if !hasUser(ids, userID) {
-		t.Fatal("платящий юзер с нулём часов до expiry не попал в SubEmptyBalanceUsers")
+		t.Fatal("paying user with zero hours before expiry was not selected in SubEmptyBalanceUsers")
 	}
 
 	if err := s.MarkNudgeSent(ctx, userID, nudgeSubEmptyBalance); err != nil {
@@ -350,7 +350,7 @@ func TestSubEmptyBalanceUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubEmptyBalanceUsers #2: %v", err)
 	}
 	if hasUser(ids, userID) {
-		t.Error("после nudge_sent sub_empty_balance юзер снова в выборке")
+		t.Error("user is selected again after nudge_sent sub_empty_balance")
 	}
 
 	expiredUser := newTestUser(t, s)
@@ -363,7 +363,7 @@ func TestSubEmptyBalanceUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubEmptyBalanceUsers #3: %v", err)
 	}
 	if hasUser(ids, expiredUser) {
-		t.Error("юзер с календарно истёкшей подпиской попал в SubEmptyBalanceUsers вместо sub-expired")
+		t.Error("user with a calendar-expired subscription was selected in SubEmptyBalanceUsers instead of sub-expired")
 	}
 
 	activeJobUser := newTestUser(t, s)
@@ -377,20 +377,20 @@ func TestSubEmptyBalanceUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubEmptyBalanceUsers #4: %v", err)
 	}
 	if hasUser(ids, activeJobUser) {
-		t.Error("юзер с empty balance из-за активного платного резерва попал в SubEmptyBalanceUsers")
+		t.Error("user with empty balance due to an active paid reserve was selected in SubEmptyBalanceUsers")
 	}
 }
 
-// TestSubExpiringUsers_Dedup — §5.6: подписка истекает через 3-4 дня + succeeded-платёж
-// -> юзер в выборке; Mark -> выпадает (дедуп один-пуш-на-ситуацию); НОВЫЙ платёж
-// (paid_at позже notified) -> снова в выборке (COALESCE-дедуп пускает после продления).
+// TestSubExpiringUsers_Dedup (§5.6): subscription expires in 3-4 days + succeeded payment
+// -> user is selected; Mark -> dropped (one-push-per-situation dedup); a NEW payment
+// (paid_at later than notified) -> selected again (COALESCE dedup lets it through after renewal).
 func TestSubExpiringUsers_Dedup(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
 	cleanupPayments(t, s, userID)
 
-	// Конец покрытия в окне now()+[3d,4d]: 3 дня 12 часов — середина окна.
+	// End of coverage in the now()+[3d,4d] window: 3 days 12 hours is the middle of the window.
 	insertSubscriptionExpiring(t, s, userID, 5, "3 days 12 hours")
 	insertSucceededPayment(t, s, userID, "expiring-1")
 
@@ -399,7 +399,7 @@ func TestSubExpiringUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubExpiringUsers #1: %v", err)
 	}
 	if !hasUser(ids, userID) {
-		t.Fatal("юзер с подпиской, истекающей через 3.5 дня, не попал в SubExpiringUsers")
+		t.Fatal("user with a subscription expiring in 3.5 days was not selected in SubExpiringUsers")
 	}
 
 	if err := s.MarkSubExpiringAndNudgeSent(ctx, userID); err != nil {
@@ -414,10 +414,10 @@ func TestSubExpiringUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubExpiringUsers #2: %v", err)
 	}
 	if hasUser(ids, userID) {
-		t.Error("после Mark юзер снова в выборке — дедуп не сработал (спам каждый тик)")
+		t.Error("user is selected again after Mark: dedup failed (spam on every tick)")
 	}
 
-	// Новый платёж: paid_at=now() строго позже notified_sub_expiring_at (Mark был раньше).
+	// New payment: paid_at=now() strictly later than notified_sub_expiring_at (Mark was earlier).
 	insertSucceededPayment(t, s, userID, "expiring-2")
 
 	ids, err = s.SubExpiringUsers(ctx)
@@ -425,7 +425,7 @@ func TestSubExpiringUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubExpiringUsers #3: %v", err)
 	}
 	if !hasUser(ids, userID) {
-		t.Error("после нового платежа юзер не вернулся в выборку — COALESCE-дедуп не пускает продлившего")
+		t.Error("user did not return to the selection after a new payment: COALESCE dedup blocks the renewed user")
 	}
 
 	lowBalanceUser := newTestUser(t, s)
@@ -439,7 +439,7 @@ func TestSubExpiringUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubExpiringUsers #4: %v", err)
 	}
 	if hasUser(ids, lowBalanceUser) {
-		t.Error("юзер с остатком меньше часа попал в SubExpiringUsers — должен получить sub_low_balance")
+		t.Error("user with less than an hour left was selected in SubExpiringUsers: must get sub_low_balance")
 	}
 }
 
@@ -467,15 +467,15 @@ func TestMarkLegacyAndNudgeSent_Rollback(t *testing.T) {
 	}
 }
 
-// TestTrialEndingUsers_Dedup — §5.6: триал без подписки, осталось меньше часа -> в выборке;
-// Mark -> выпадает (notify-once через IS NULL); юзер с активной подпиской и тем же done
-// НЕ попадает (он платит, NOT EXISTS отсекает).
+// TestTrialEndingUsers_Dedup (§5.6): trial without a subscription, less than an hour left -> selected;
+// Mark -> dropped (notify-once via IS NULL); a user with an active subscription and the same done
+// is NOT selected (they pay, NOT EXISTS cuts them off).
 func TestTrialEndingUsers_Dedup(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
 	const trialLimit = 180
 
-	// --- юзер на грани триала (осталось 59 минут), без подписки ---
+	// --- user at the edge of the trial (59 minutes left), no subscription ---
 	trialUser := newTestUser(t, s)
 	setTrialDone(t, s, trialUser, 121)
 
@@ -484,7 +484,7 @@ func TestTrialEndingUsers_Dedup(t *testing.T) {
 		t.Fatalf("TrialEndingUsers #1: %v", err)
 	}
 	if !hasUser(ids, trialUser) {
-		t.Fatal("юзер с остатком триала меньше часа не попал в TrialEndingUsers")
+		t.Fatal("user with less than an hour of trial left was not selected in TrialEndingUsers")
 	}
 
 	if err := s.MarkTrialLowAndNudgeSent(ctx, trialUser); err != nil {
@@ -498,10 +498,10 @@ func TestTrialEndingUsers_Dedup(t *testing.T) {
 		t.Fatalf("TrialEndingUsers #2: %v", err)
 	}
 	if hasUser(ids, trialUser) {
-		t.Error("после Mark триал-юзер снова в выборке — notify-once дедуп не сработал")
+		t.Error("trial user is selected again after Mark: notify-once dedup failed")
 	}
 
-	// --- юзер с тем же done, но активной подпиской: платящему пуш не нужен ---
+	// --- user with the same done but an active subscription: a paying user needs no push ---
 	subUser := newTestUser(t, s)
 	cleanupPayments(t, s, subUser)
 	setTrialDone(t, s, subUser, 121)
@@ -512,7 +512,7 @@ func TestTrialEndingUsers_Dedup(t *testing.T) {
 		t.Fatalf("TrialEndingUsers #3: %v", err)
 	}
 	if hasUser(ids, subUser) {
-		t.Error("юзер с активной подпиской попал в TrialEndingUsers — NOT EXISTS не отсёк платящего")
+		t.Error("user with an active subscription was selected in TrialEndingUsers: NOT EXISTS did not cut off the paying user")
 	}
 
 	zeroBalanceSubUser := newTestUser(t, s)
@@ -524,12 +524,12 @@ func TestTrialEndingUsers_Dedup(t *testing.T) {
 		t.Fatalf("TrialEndingUsers #4: %v", err)
 	}
 	if hasUser(ids, zeroBalanceSubUser) {
-		t.Error("юзер с календарно активной подпиской и нулём минут попал в TrialEndingUsers — должен идти в sub_empty_balance")
+		t.Error("user with a calendar-active subscription and zero minutes was selected in TrialEndingUsers: must go to sub_empty_balance")
 	}
 }
 
-// setTrialDone выставляет trial_minutes_done. CHECK (done <= used) — поднимаем used
-// синхронно, иначе строка нарушит инвариант миграции 00009.
+// setTrialDone sets trial_minutes_done. CHECK (done <= used), so we raise used
+// in step, otherwise the row violates the invariant of migration 00009.
 func setTrialDone(t *testing.T, s *Storage, userID int64, done int) {
 	t.Helper()
 	_, err := s.pool.Exec(context.Background(),
@@ -546,17 +546,17 @@ func setTrialDone(t *testing.T, s *Storage, userID int64, done int) {
 	}
 }
 
-// TestSubExpiredUsers_Dedup — §5.6: подписка истекла (expires_at в прошлом, нет активного
-// покрытия) + succeeded-платёж -> в выборке; Mark -> выпадает; активная подписка НЕ
-// считается «истёкшей». Дедуп — тот же COALESCE-паттерн, что в expiring.
+// TestSubExpiredUsers_Dedup (§5.6): subscription expired (expires_at in the past, no active
+// coverage) + succeeded payment -> selected; Mark -> dropped; an active subscription is NOT
+// considered "expired". The dedup is the same COALESCE pattern as in expiring.
 func TestSubExpiredUsers_Dedup(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
 
-	// --- юзер с истёкшей подпиской ---
+	// --- user with an expired subscription ---
 	expiredUser := newTestUser(t, s)
 	cleanupPayments(t, s, expiredUser)
-	// expires_at в прошлом: balance не важен, активного покрытия нет (NOT EXISTS пройдёт).
+	// expires_at in the past: balance does not matter, there is no active coverage (NOT EXISTS passes).
 	insertSubscriptionExpiring(t, s, expiredUser, 5, "-2 days")
 	insertSucceededPayment(t, s, expiredUser, "expired-1")
 
@@ -565,7 +565,7 @@ func TestSubExpiredUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubExpiredUsers #1: %v", err)
 	}
 	if !hasUser(ids, expiredUser) {
-		t.Fatal("юзер с истёкшей подпиской и succeeded-платежом не попал в SubExpiredUsers")
+		t.Fatal("user with an expired subscription and a succeeded payment was not selected in SubExpiredUsers")
 	}
 
 	if err := s.MarkSubExpiredAndNudgeSent(ctx, expiredUser); err != nil {
@@ -579,21 +579,21 @@ func TestSubExpiredUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubExpiredUsers #2: %v", err)
 	}
 	if hasUser(ids, expiredUser) {
-		t.Error("после Mark юзер снова в SubExpiredUsers — дедуп не сработал")
+		t.Error("user is in SubExpiredUsers again after Mark: dedup failed")
 	}
 
-	// Новый платёж: paid_at=now() позже notified — COALESCE-дедуп снова открывает выборку
-	// (юзер заново оплатил; новый период тоже истечёт -> повторный «истекла»-пуш правомерен).
+	// New payment: paid_at=now() later than notified; COALESCE dedup reopens the selection
+	// (the user paid again; the new period will expire too -> a repeated "expired" push is legitimate).
 	insertSucceededPayment(t, s, expiredUser, "expired-2")
 	ids, err = s.SubExpiredUsers(ctx)
 	if err != nil {
 		t.Fatalf("SubExpiredUsers #2b: %v", err)
 	}
 	if !hasUser(ids, expiredUser) {
-		t.Error("после нового платежа юзер не вернулся в SubExpiredUsers — COALESCE-дедуп не пускает")
+		t.Error("user did not return to SubExpiredUsers after a new payment: COALESCE dedup blocks")
 	}
 
-	// --- юзер с активной подпиской: НЕ «истекла» ---
+	// --- user with an active subscription: NOT "expired" ---
 	activeUser := newTestUser(t, s)
 	cleanupPayments(t, s, activeUser)
 	insertSubscriptionExpiring(t, s, activeUser, 5, "10 days")
@@ -604,6 +604,6 @@ func TestSubExpiredUsers_Dedup(t *testing.T) {
 		t.Fatalf("SubExpiredUsers #3: %v", err)
 	}
 	if hasUser(ids, activeUser) {
-		t.Error("юзер с активной подпиской попал в SubExpiredUsers — NOT EXISTS не отсёк активное покрытие")
+		t.Error("user with an active subscription was selected in SubExpiredUsers: NOT EXISTS did not cut off the active coverage")
 	}
 }

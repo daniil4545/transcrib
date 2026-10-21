@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// Тексты F9-пушей (architecture.md §7.2, db.md §5.6). Простой текст без кнопки:
-// notify — это bot.SendText. CTA — отсылка к reply-кнопке «💳 Оформить подписку»
-// (slash-команды /subscribe нет: вся навигация на кнопках, см. tg.go setup). Тон
-// нейтральный, призыв к действию явный.
+// F9 push texts (architecture.md §7.2, db.md §5.6). Plain text without a button:
+// notify is bot.SendText. The CTA refers to the reply button "💳 Оформить подписку"
+// (there is no /subscribe slash command: all navigation is on buttons, see tg.go setup). The tone
+// is neutral, the call to action is explicit.
 const (
 	msgTrialEnding = "Бесплатный баланс почти закончился — осталось меньше часа. " +
 		"Чтобы продолжить пользоваться сервисом, нажмите кнопку «💳 Оформить подписку» в меню."
@@ -26,23 +26,23 @@ const (
 		"Оформите следующий месяц кнопкой «💳 Оформить подписку» в меню, чтобы продолжить."
 )
 
-// Notifier — воркер F9-пушей (architecture.md §7.2). Вынесен из orchestrator.go ради SRP:
-// работает с users (не с jobs). Одна горутина, суточная логика — частый тик не нужен.
+// Notifier is the F9 push worker (architecture.md §7.2). Split out of orchestrator.go for SRP:
+// it works with users (not jobs). One goroutine, daily logic: a frequent tick is not needed.
 type Notifier struct {
 	storage *Storage
-	// notify шлёт пуш юзеру. Замыкание поверх *Bot из main.go (bot.SendText),
-	// как в Orchestrator: рассылка и доставка документов — разные ответственности.
+	// notify sends a push to the user. A closure over *Bot from main.go (bot.SendText),
+	// as in Orchestrator: broadcasting and document delivery are separate responsibilities.
 	notify     func(chatID int64, text string) error
-	trialLimit int           // лимит триала в минутах
-	tick       time.Duration // 1h в проде; F9 — суточная логика, 30с-тик избыточен
+	trialLimit int           // trial limit in minutes
+	tick       time.Duration // 1h in prod; F9 is daily logic, a 30s tick is excessive
 }
 
 func NewNotifier(s *Storage, notify func(int64, string) error, trialLimit int, tick time.Duration) *Notifier {
 	return &Notifier{storage: s, notify: notify, trialLimit: trialLimit, tick: tick}
 }
 
-// Run гонит tickOnce до отмены ctx. Первый тик — сразу при старте (как Orchestrator):
-// после рестарта не ждём час, чтобы разослать накопившиеся уведомления.
+// Run drives tickOnce until ctx is cancelled. The first tick is immediate on start (as in Orchestrator):
+// after a restart we do not wait an hour before sending the accumulated notifications.
 func (n *Notifier) Run(ctx context.Context) {
 	n.tickOnce(ctx)
 
@@ -58,8 +58,8 @@ func (n *Notifier) Run(ctx context.Context) {
 	}
 }
 
-// tickOnce — одна итерация по классам дожимов.
-// Каждый класс независим: сбой выборки одного не мешает остальным (slog.Error + continue).
+// tickOnce is one iteration over the follow-up classes.
+// Each class is independent: a failed query for one does not block the others (slog.Error + continue).
 func (n *Notifier) tickOnce(ctx context.Context) {
 	n.notifyGroup(ctx, "trial-ending", n.storage.TrialEndingUsers, msgTrialEnding, n.storage.MarkTrialLowAndNudgeSent)
 	n.notifyGroup(ctx, "payment-followup", n.paymentFollowupFetch, msgPaymentFollowup, n.markNudge(nudgePaymentFollowup))
@@ -69,8 +69,8 @@ func (n *Notifier) tickOnce(ctx context.Context) {
 	n.notifyGroup(ctx, "sub-expired", n.subExpiredFetch, msgSubExpired, n.storage.MarkSubExpiredAndNudgeSent)
 }
 
-// fetch-адаптеры выравнивают выборки без trialLimit к сигнатуре fetch
-// в notifyGroup — иначе пришлось бы дублировать тело цикла на каждый класс.
+// The fetch adapters align queries without trialLimit to the fetch signature
+// in notifyGroup; otherwise the loop body would have to be duplicated for every class.
 func (n *Notifier) subExpiringFetch(ctx context.Context, _ int) ([]int64, error) {
 	return n.storage.SubExpiringUsers(ctx)
 }
@@ -97,15 +97,15 @@ func (n *Notifier) markNudge(class string) func(context.Context, int64) error {
 	}
 }
 
-// notifyGroup обрабатывает один класс пушей: выбрать кандидатов и для каждого
-// send -> mark. Порядок строго «send потом mark»: при сбое notify НЕ отмечаем —
-// пуш потеряется, повторим на следующем тике (дедуп в выборках страхует от спама,
-// мы лишь не теряем уведомление). Сбой одного юзера не рушит остальных (continue).
+// notifyGroup handles one push class: select candidates and, for each,
+// send -> mark. The order is strictly "send, then mark": if notify fails we do NOT mark,
+// so the push is not lost and is retried on the next tick (dedup in the queries guards against spam,
+// we only avoid losing the notification). A failure for one user does not break the rest (continue).
 func (n *Notifier) notifyGroup(
 	ctx context.Context,
 	class string,
-	// fetch: int — trialLimit (нужен только TrialEndingUsers; sub-классы его игнорируют
-	// через адаптеры subExpiring/subExpiredFetch — выравнивание под общую сигнатуру).
+	// fetch: int is trialLimit (needed only by TrialEndingUsers; the sub classes ignore it
+	// via the subExpiring/subExpiredFetch adapters, aligning to the common signature).
 	fetch func(context.Context, int) ([]int64, error),
 	text string,
 	mark func(context.Context, int64) error,
@@ -114,7 +114,7 @@ func (n *Notifier) notifyGroup(
 	userIDs, err := fetch(fctx, n.trialLimit)
 	cancel()
 	if err != nil {
-		// context.Canceled при shutdown — штатно, не ошибка.
+		// context.Canceled on shutdown is normal, not an error.
 		if !errors.Is(err, context.Canceled) {
 			slog.Error("notifier fetch", "class", class, "err", err)
 		}
@@ -124,20 +124,20 @@ func (n *Notifier) notifyGroup(
 	for _, uid := range userIDs {
 		if err := n.notify(uid, text); err != nil {
 			slog.Warn("notifier send", "class", class, "user_id", uid, "err", err)
-			continue // не отмечаем — повторим на следующем тике
+			continue // not marked: retry on the next tick
 		}
 		mctx, cancel := context.WithTimeout(ctx, dbTimeout)
 		err := mark(mctx, uid)
 		cancel()
 		if err != nil {
-			// context.Canceled при shutdown — штатно (родительский ctx отменён),
-			// не ошибка: прекращаем класс, остальные uid обработаем после рестарта.
+			// context.Canceled on shutdown is normal (the parent ctx is cancelled),
+			// not an error: stop the class, the remaining uids are handled after restart.
 			if errors.Is(err, context.Canceled) {
 				return
 			}
-			// Пуш ушёл, но отметка не легла: следующий тик повторит пуш (дедуп
-			// выборки на это не страхует — notified_at не обновился). Терпимо: лишний
-			// пуш лучше потери, но логируем как Error для видимости.
+			// The push went out but the mark was not saved: the next tick repeats the push (the query
+			// dedup does not guard against this, notified_at was not updated). Tolerable: an extra
+			// push is better than a loss, but we log it as Error for visibility.
 			slog.Error("notifier mark", "class", class, "user_id", uid, "err", err)
 		}
 	}

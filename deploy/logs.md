@@ -1,26 +1,26 @@
-# Логи transcrib
+# transcrib logs
 
-Runbook по логам. Цель: после любого deploy оператор или AI-агент должен быстро понять, где
-физически лежит лог, какой лог является архивом, а какой только live-tail.
+Logs runbook. Goal: after any deploy, an operator or an AI agent must quickly understand where the
+log physically lives, which log is an archive, and which one is only a live tail.
 
-## Текущий статус
+## Current status
 
-| Контур | Контейнеры | Основной доступ к логам | Архив 14 дней |
+| Environment | Containers | Main log access | 14-day archive |
 | --- | --- | --- | --- |
-| Coolify prod | `app-<prod-resource-uuid>`, `postgres-<prod-resource-uuid>`; migrate-container может отсутствовать после deploy | `deploy/safe-ssh.sh coolify-prod-*-logs`, Coolify UI | Да, host journald |
-| Coolify dev | `app-<dev-resource-uuid>`, `postgres-<dev-resource-uuid>`, `migrate-<dev-resource-uuid>` | `deploy/safe-ssh.sh coolify-dev-*-logs`, Coolify UI | Нет, сейчас Docker `json-file` |
-| Legacy prod fallback | `transcrib-app-1`, `transcrib-postgres-1`, `transcrib-migrate-1` | `deploy/safe-ssh.sh prod-*-logs`, `prod-*-journal` | Да, host journald, пока контейнеры существуют |
-| Legacy dev fallback | `transcrib-dev-*` | `deploy/safe-ssh.sh test-*-logs`, `test-*-journal` | Да, host journald, пока контейнеры существуют |
-| OpenRouter proxy | `mihomo.service` | `deploy/safe-ssh.sh mihomo-status`, `deploy/safe-ssh.sh mihomo-logs` | Да, host journald |
-| Dozzle | `dozzle-dozzle-1` | SSH tunnel -> `http://127.0.0.1:48080` | Нет |
+| Coolify prod | `app-<prod-resource-uuid>`, `postgres-<prod-resource-uuid>`; the migrate container may be absent after deploy | `deploy/safe-ssh.sh coolify-prod-*-logs`, Coolify UI | Yes, host journald |
+| Coolify dev | `app-<dev-resource-uuid>`, `postgres-<dev-resource-uuid>`, `migrate-<dev-resource-uuid>` | `deploy/safe-ssh.sh coolify-dev-*-logs`, Coolify UI | No, currently Docker `json-file` |
+| Legacy prod fallback | `transcrib-app-1`, `transcrib-postgres-1`, `transcrib-migrate-1` | `deploy/safe-ssh.sh prod-*-logs`, `prod-*-journal` | Yes, host journald, while the containers exist |
+| Legacy dev fallback | `transcrib-dev-*` | `deploy/safe-ssh.sh test-*-logs`, `test-*-journal` | Yes, host journald, while the containers exist |
+| OpenRouter proxy | `mihomo.service` | `deploy/safe-ssh.sh mihomo-status`, `deploy/safe-ssh.sh mihomo-logs` | Yes, host journald |
+| Dozzle | `dozzle-dozzle-1` | SSH tunnel -> `http://127.0.0.1:48080` | No |
 
-Важно: Coolify-generated compose на 2026-07-01 для dev не содержит `logging.driver=journald`, хотя
-`src/docker-compose.coolify.yml` задаёт `logging:`. Фактическая проверка `docker inspect` показывает
-`app_log_driver=json-file`. Поэтому Coolify dev logs сейчас существуют, но не считаются
-14-дневным journald-архивом. Coolify prod прошёл log gate: `deploy/safe-ssh.sh coolify-prod-health`
-показывает `app_log_driver=journald` и `postgres_log_driver=journald`.
+Important: as of 2026-07-01 the Coolify-generated compose for dev does not contain
+`logging.driver=journald`, although `src/docker-compose.coolify.yml` sets `logging:`. The actual
+`docker inspect` check shows `app_log_driver=json-file`. So Coolify dev logs exist now, but do not
+count as a 14-day journald archive. Coolify prod passed the log gate: `deploy/safe-ssh.sh
+coolify-prod-health` shows `app_log_driver=journald` and `postgres_log_driver=journald`.
 
-## Команды
+## Commands
 
 Coolify prod:
 
@@ -30,12 +30,12 @@ deploy/safe-ssh.sh coolify-prod-app-logs 300
 deploy/safe-ssh.sh coolify-prod-postgres-logs 100
 ```
 
-Перед prod deploy отдельно выполнить `coolify-prod-active-jobs`: это обязательный stop-gate, команда
-должна показать `active_jobs_count=0`. Если есть активные Job'ы или app logs показывают текущий
-звонок, deploy не запускать. После deploy этот gate не повторяется.
+Before a prod deploy, run `coolify-prod-active-jobs` separately: it is a mandatory stop gate, the
+command must show `active_jobs_count=0`. If there are active jobs or the app logs show a current
+call, do not start the deploy. After the deploy this gate is not repeated.
 
-Prod migrate-container может отсутствовать после deploy. `verify-deploy.sh prod` не требует его,
-но отдельной safe-ssh командой проверяет ответ БД и читает `goose_version`.
+The prod migrate container may be absent after deploy. `verify-deploy.sh prod` does not require it,
+but checks the DB response and reads `goose_version` with a separate safe-ssh command.
 
 Legacy prod fallback:
 
@@ -55,10 +55,10 @@ deploy/safe-ssh.sh coolify-dev-postgres-logs 200
 deploy/safe-ssh.sh coolify-dev-migrate-logs 200
 ```
 
-Если Coolify удалил one-shot migrate-container, dev-проверка возвращает `INCONCLUSIVE` (`4`):
-наличие goose version в БД не доказывает `Exited (0)` именно для текущего deploy.
+If Coolify removed the one-shot migrate container, the dev check returns `INCONCLUSIVE` (`4`): the
+presence of the goose version in the DB does not prove `Exited (0)` for the current deploy.
 
-Системный слой:
+System layer:
 
 ```sh
 deploy/safe-ssh.sh docker-events 24
@@ -76,33 +76,33 @@ deploy/safe-ssh.sh mihomo-logs 100
 deploy/safe-ssh.sh openrouter-egress
 ```
 
-Не печатать subscription/config provider'а `mihomo`; в логах допускаются домены маршрутизации, но
-не секреты.
+Do not print the `mihomo` provider subscription/config; routing domains are acceptable in the logs,
+but secrets are not.
 
-## Что проверять после deploy
+## What to check after a deploy
 
-1. `deploy/verify-deploy.sh <dev|prod> <full-sha>` вернул `PASS`: app/Postgres healthy,
-   OCI revision/image SHA точный, restart count `0`, OOM `false`, start time валиден.
-2. Перед prod deploy подтверждён `active_jobs_count=0`; это не post-deploy gate.
-3. В логах текущего `StartedAt` есть `startup_complete`.
-4. За весь текущий запуск нет `panic`, `fatal`, `409 Conflict`, config/db errors.
-5. DB отвечает, `goose_version` читается отдельной allowlisted safe-ssh командой.
-6. Для dev доступный migrate-container имеет тот же SHA и `Exited (0)`; удалённый one-shot даёт
-   `INCONCLUSIVE`. Для prod отсутствие migrate-container не является fail.
-7. Для Telegram long polling запущен ровно один app на один bot token.
-8. Если OpenRouter summary включён, direct VPS egress может оставаться `403`, но запрос через
-   `mihomo` должен давать `HTTP 200` на `/api/v1/models`; public `:20170/:20171` должен быть закрыт.
-9. Для Coolify prod читать архив через `coolify-prod-*-logs`; для legacy fallback по времени
-   использовать `*-journal`; Dozzle использовать только как live-tail.
-10. Для Coolify dev до исправления log driver помнить: `coolify-dev-*-logs` читает Docker json-file,
-   а не journald-retention.
+1. `deploy/verify-deploy.sh <dev|prod> <full-sha>` returned `PASS`: app/Postgres healthy,
+   OCI revision/image SHA exact, restart count `0`, OOM `false`, start time valid.
+2. Before a prod deploy `active_jobs_count=0` was confirmed; this is not a post-deploy gate.
+3. The logs of the current `StartedAt` contain `startup_complete`.
+4. Over the whole current run there is no `panic`, `fatal`, `409 Conflict`, config/db errors.
+5. The DB answers, `goose_version` is read by a separate allowlisted safe-ssh command.
+6. For dev, an available migrate container has the same SHA and `Exited (0)`; a removed one-shot
+   gives `INCONCLUSIVE`. For prod, the absence of the migrate container is not a fail.
+7. For Telegram long polling, exactly one app runs per bot token.
+8. If the OpenRouter summary is enabled, direct VPS egress may stay `403`, but a request through
+   `mihomo` must give `HTTP 200` on `/api/v1/models`; public `:20170/:20171` must be closed.
+9. For Coolify prod read the archive through `coolify-prod-*-logs`; for the legacy fallback by time
+   use `*-journal`; use Dozzle only as a live tail.
+10. For Coolify dev, until the log driver is fixed, remember: `coolify-dev-*-logs` reads Docker
+   json-file, not the journald retention.
 
-## При переносе на новый сервер
+## When moving to a new server
 
-Минимальные требования:
+Minimum requirements:
 
-- app пишет структурные JSON-логи в stdout;
-- у каждого runtime-контура есть documented command для app/postgres/migrate logs;
-- prod logs должны иметь архив с retention не меньше 14 дней;
-- Dozzle/Coolify UI могут быть удобным live-viewer, но не заменяют архив;
-- логи не должны содержать токены, пароли, DSN, приватные ссылки и полные секреты.
+- the app writes structured JSON logs to stdout;
+- every runtime environment has a documented command for app/postgres/migrate logs;
+- prod logs must have an archive with retention of at least 14 days;
+- Dozzle/Coolify UI can be a convenient live viewer, but do not replace the archive;
+- logs must not contain tokens, passwords, DSNs, private links, or full secrets.

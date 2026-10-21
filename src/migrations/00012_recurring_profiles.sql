@@ -1,6 +1,6 @@
 -- +goose Up
--- Сохранённый способ оплаты для будущих автосписаний ЮKassa.
--- Сама подписка остаётся моделью "один successful payment = одна строка subscriptions".
+-- Saved payment method for future YooKassa recurring charges.
+-- The subscription itself stays in the model "one successful payment = one subscriptions row".
 
 CREATE TABLE recurring_profiles (
     user_id BIGINT PRIMARY KEY REFERENCES users(telegram_id) ON DELETE RESTRICT,

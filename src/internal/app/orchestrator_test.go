@@ -10,11 +10,11 @@ import (
 	"time"
 )
 
-// Тесты разводки advance — критический узел «переходы state machine» (docs/testing.md).
-// Storage настоящий (Postgres из DATABASE_URL, см. storage_test.go), провайдер —
-// MockProvider, доставка и notify — записывающие фейки.
+// Tests of the advance dispatch, a critical node: "state machine transitions" (docs/testing.md).
+// Storage is real (Postgres from DATABASE_URL, see storage_test.go), the provider is
+// MockProvider, delivery and notify are recording fakes.
 
-// recordingDelivery записывает вызовы Deliver для проверок.
+// recordingDelivery records Deliver calls for assertions.
 type recordingDelivery struct {
 	calls  []deliveredDoc
 	groups []deliveredGroup
@@ -78,18 +78,18 @@ func (p *failedPollProvider) Fetch(context.Context, string) (Result, error) {
 	return p.result, p.fetchErr
 }
 
-// testOrchestrator собирает оркестратор на фейках; вызовы notify пишутся в *notified.
+// testOrchestrator assembles an orchestrator on fakes; notify calls are written to *notified.
 func testOrchestrator(s *Storage, p TranscriptionProvider, d DocumentDelivery, notified *[]int64) *Orchestrator {
 	notify := func(chatID int64, _ string) error {
 		*notified = append(*notified, chatID)
 		return nil
 	}
-	// maxJobAge большой: свежесозданные тестовые джобы не должны попадать в orphan-timeout.
-	// editStatus — no-op: у тестовых джоб status_message_id=nil, updateStatus уходит в notify.
+	// maxJobAge is large: freshly created test jobs must not hit the orphan timeout.
+	// editStatus is a no-op: test jobs have status_message_id=nil, so updateStatus goes to notify.
 	return NewOrchestrator(s, p, d, NewMockSummarizer(), notify, noopEdit, time.Second, time.Hour, 10*time.Minute, 3, 180)
 }
 
-// noopEdit — заглушка editStatus для тестов, где статус-сообщения нет (fallback в notify).
+// noopEdit is an editStatus stub for tests where there is no status message (fallback to notify).
 func noopEdit(int64, int64, string) error { return nil }
 
 func TestMaybeNotifyBalanceDepleted(t *testing.T) {
@@ -113,7 +113,7 @@ func TestMaybeNotifyBalanceDepleted(t *testing.T) {
 	var sent []string
 	notify := func(chatID int64, text string) error {
 		if chatID != userID {
-			t.Fatalf("notify chatID = %d, ожидали %d", chatID, userID)
+			t.Fatalf("notify chatID = %d, want %d", chatID, userID)
 		}
 		sent = append(sent, text)
 		return nil
@@ -123,21 +123,21 @@ func TestMaybeNotifyBalanceDepleted(t *testing.T) {
 	o.maybeNotifyBalanceDepleted(ctx, job)
 
 	if len(sent) != 1 || sent[0] != "Баланс закончился" {
-		t.Fatalf("sent = %v, ожидали одно сообщение о нуле баланса", sent)
+		t.Fatalf("sent = %v, want one message about the zero balance", sent)
 	}
 }
 
-// editCall фиксирует вызов editStatus (chat, message, текст) для проверок редактирования.
+// editCall records an editStatus call (chat, message, text) for edit assertions.
 type editCall struct {
 	chatID, msgID int64
 	text          string
 }
 
-// processingJob создаёт джобу и доводит её до processing (бот вышел, фоновая
-// расшифровка) с заданным external id — заготовка для веток pollJob. Проходит фазы
-// joining -> recording -> processing честно через сеттеры, чтобы DB-строка реально
-// была в processing (а не только in-memory): тесты на «джоба держится в processing»
-// проверяют состояние строки.
+// processingJob creates a job and brings it to processing (the bot has left, background
+// transcription) with the given external id: a fixture for the pollJob branches. It goes through the phases
+// joining -> recording -> processing honestly via setters, so that the DB row is really
+// in processing (not only in memory): tests on "the job stays in processing"
+// check the row state.
 func processingJob(t *testing.T, s *Storage, userID int64, extID string) Job {
 	t.Helper()
 	job, err := s.CreateJob(context.Background(), userID, "https://meet.google.com/adv-"+extID, "mock", 180)
@@ -158,9 +158,9 @@ func processingJob(t *testing.T, s *Storage, userID int64, extID string) Job {
 	return job
 }
 
-// TestAdvance_CreatedSubmits — created: Submit у провайдера, переход в joining
-// (бот подключается; новая семантика — processing означает «бот уже вышел»),
-// external_job_id сохранён; доставки и уведомлений нет.
+// TestAdvance_CreatedSubmits: created -> Submit at the provider, transition to joining
+// (the bot is connecting; new semantics: processing means "the bot has already left"),
+// external_job_id is saved; no deliveries or notifications.
 func TestAdvance_CreatedSubmits(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -177,19 +177,19 @@ func TestAdvance_CreatedSubmits(t *testing.T) {
 
 	status, extID, _ := jobRow(t, s, job.ID)
 	if status != string(JobJoining) {
-		t.Errorf("статус %q, ожидали joining", status)
+		t.Errorf("status %q, want joining", status)
 	}
 	want := fmt.Sprintf("mock-job-%d", job.ID)
 	if extID == nil || *extID != want {
-		t.Errorf("external_job_id = %v, ожидали %q", extID, want)
+		t.Errorf("external_job_id = %v, want %q", extID, want)
 	}
 	if len(delivery.calls) != 0 {
-		t.Errorf("преждевременная доставка: %v", delivery.calls)
+		t.Errorf("premature delivery: %v", delivery.calls)
 	}
-	// Progress-статусы редактируют сохранённое status-сообщение. Если message id ещё
-	// не записан, новых fallback-сообщений не шлём, чтобы не спамить пользователя.
+	// Progress statuses edit the saved status message. If the message id is not yet
+	// recorded, we send no new fallback messages, to avoid spamming the user.
 	if len(notified) != 0 {
-		t.Errorf("прогресс-пуш о submit без status_message_id: notified=%v", notified)
+		t.Errorf("progress push about submit without status_message_id: notified=%v", notified)
 	}
 }
 
@@ -213,19 +213,19 @@ func TestSubmit_PermanentHTTPErrorFailsAndRefunds(t *testing.T) {
 	o.advance(context.Background(), job)
 
 	if got := jobStatus(t, s, job.ID); got != string(JobFailed) {
-		t.Errorf("status = %q, ожидали %q", got, JobFailed)
+		t.Errorf("status = %q, want %q", got, JobFailed)
 	}
 	if got := trialUsed(t, s, userID); got != 0 {
-		t.Errorf("trial_meetings_used = %d, ожидали 0 (refund on submit failure)", got)
+		t.Errorf("trial_meetings_used = %d, want 0 (refund on submit failure)", got)
 	}
 	if provider.submitCalls != 1 {
-		t.Errorf("submitCalls = %d, ожидали 1", provider.submitCalls)
+		t.Errorf("submitCalls = %d, want 1", provider.submitCalls)
 	}
 	if got := o.submitAttempts[job.ID]; got != 0 {
-		t.Errorf("submitAttempts[%d] = %d, ожидали cleanup", job.ID, got)
+		t.Errorf("submitAttempts[%d] = %d, want cleanup", job.ID, got)
 	}
 	if len(notified) != 1 || notified[0] != userID {
-		t.Errorf("fail notification = %v, ожидали один для %d", notified, userID)
+		t.Errorf("fail notification = %v, want one for %d", notified, userID)
 	}
 }
 
@@ -243,27 +243,27 @@ func TestSubmit_RetryableErrorFailsOnThirdAttempt(t *testing.T) {
 
 	o.advance(context.Background(), job)
 	if got := jobStatus(t, s, job.ID); got != string(JobCreated) {
-		t.Fatalf("after first attempt status = %q, ожидали %q", got, JobCreated)
+		t.Fatalf("after first attempt status = %q, want %q", got, JobCreated)
 	}
 	o.advance(context.Background(), job)
 	if got := jobStatus(t, s, job.ID); got != string(JobCreated) {
-		t.Fatalf("after second attempt status = %q, ожидали %q", got, JobCreated)
+		t.Fatalf("after second attempt status = %q, want %q", got, JobCreated)
 	}
 	o.advance(context.Background(), job)
 	if got := jobStatus(t, s, job.ID); got != string(JobFailed) {
-		t.Errorf("after third attempt status = %q, ожидали %q", got, JobFailed)
+		t.Errorf("after third attempt status = %q, want %q", got, JobFailed)
 	}
 	if got := trialUsed(t, s, userID); got != 0 {
-		t.Errorf("trial_meetings_used = %d, ожидали 0 (refund after attempts)", got)
+		t.Errorf("trial_meetings_used = %d, want 0 (refund after attempts)", got)
 	}
 	if provider.submitCalls != 3 {
-		t.Errorf("submitCalls = %d, ожидали 3", provider.submitCalls)
+		t.Errorf("submitCalls = %d, want 3", provider.submitCalls)
 	}
 	if got := o.submitAttempts[job.ID]; got != 0 {
-		t.Errorf("submitAttempts[%d] = %d, ожидали cleanup", job.ID, got)
+		t.Errorf("submitAttempts[%d] = %d, want cleanup", job.ID, got)
 	}
 	if len(notified) != 1 || notified[0] != userID {
-		t.Errorf("fail notification = %v, ожидали один для %d", notified, userID)
+		t.Errorf("fail notification = %v, want one for %d", notified, userID)
 	}
 }
 
@@ -283,13 +283,13 @@ func TestSubmit_StartTimeoutFailsWithoutProviderCall(t *testing.T) {
 	o.advance(context.Background(), job)
 
 	if got := jobStatus(t, s, job.ID); got != string(JobFailed) {
-		t.Errorf("status = %q, ожидали %q", got, JobFailed)
+		t.Errorf("status = %q, want %q", got, JobFailed)
 	}
 	if provider.submitCalls != 0 {
-		t.Errorf("submitCalls = %d, ожидали 0", provider.submitCalls)
+		t.Errorf("submitCalls = %d, want 0", provider.submitCalls)
 	}
 	if got := trialUsed(t, s, userID); got != 0 {
-		t.Errorf("trial_meetings_used = %d, ожидали 0 (refund on created timeout)", got)
+		t.Errorf("trial_meetings_used = %d, want 0 (refund on created timeout)", got)
 	}
 }
 
@@ -315,20 +315,20 @@ func TestPoll_JoiningStartTimeoutCancelsAndRefunds(t *testing.T) {
 	o.advance(context.Background(), job)
 
 	if got := jobStatus(t, s, job.ID); got != string(JobFailed) {
-		t.Errorf("status = %q, ожидали %q", got, JobFailed)
+		t.Errorf("status = %q, want %q", got, JobFailed)
 	}
 	if len(provider.Cancelled) != 1 || provider.Cancelled[0] != extID {
-		t.Errorf("Cancelled = %v, ожидали [%s]", provider.Cancelled, extID)
+		t.Errorf("Cancelled = %v, want [%s]", provider.Cancelled, extID)
 	}
 	if got := trialUsed(t, s, userID); got != 0 {
-		t.Errorf("trial_meetings_used = %d, ожидали 0 (refund on joining timeout)", got)
+		t.Errorf("trial_meetings_used = %d, want 0 (refund on joining timeout)", got)
 	}
 }
 
-// TestSubmit_LostToConcurrentCancel — гонка submit↔cancel: юзер отменил created-джобу,
-// пока шёл Submit. SetJobSubmitted (guard status='created') не воскрешает failed→processing;
-// submitJob останавливает осиротевшего бота у поставщика. Без guard джоба ожила бы с
-// возвращённой квотой и активным ботом (денежный + state-machine баг).
+// TestSubmit_LostToConcurrentCancel: a submit<->cancel race. The user canceled a created job
+// while Submit was in flight. SetJobSubmitted (guard status='created') does not resurrect failed->processing;
+// submitJob stops the orphaned bot at the provider. Without the guard the job would come back to life with
+// the returned quota and an active bot (a money + state-machine bug).
 func TestSubmit_LostToConcurrentCancel(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -336,7 +336,7 @@ func TestSubmit_LostToConcurrentCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	// Юзер отменяет, пока джоба ещё created (бот не отправлен) — рефанд триала.
+	// The user cancels while the job is still created (the bot was not sent): trial refund.
 	if _, _, _, err := s.CancelJob(context.Background(), userID, job.ID); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
@@ -346,35 +346,35 @@ func TestSubmit_LostToConcurrentCancel(t *testing.T) {
 	mp := &MockProvider{}
 	o := NewOrchestrator(s, mp, &recordingDelivery{}, NewMockSummarizer(), notify, noopEdit, time.Second, time.Hour, 10*time.Minute, 3, 180)
 
-	// Оркестратор держит in-memory created (claim случился до отмены) и продолжает submit.
+	// The orchestrator holds the in-memory created (claim happened before the cancel) and continues submit.
 	o.advance(context.Background(), job)
 
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobFailed) {
-		t.Errorf("статус=%s, ожидали failed (отменённую не воскрешать)", st)
+		t.Errorf("status=%s, want failed (do not resurrect a canceled one)", st)
 	}
 	want := fmt.Sprintf("mock-job-%d", job.ID)
 	if len(mp.Cancelled) != 1 || mp.Cancelled[0] != want {
-		t.Errorf("Cancel у поставщика=%v, ожидали [%s] (остановить осиротевшего бота)", mp.Cancelled, want)
+		t.Errorf("provider Cancel=%v, want [%s] (stop the orphaned bot)", mp.Cancelled, want)
 	}
 	if used := trialUsed(t, s, userID); used != 0 {
-		t.Errorf("trial_used=%d, ожидали 0 (квота не пере-резервируется на проигранном submit)", used)
+		t.Errorf("trial_used=%d, want 0 (the quota is not re-reserved on a lost submit)", used)
 	}
 	if len(notified) != 0 {
-		t.Errorf("прогресс-пуш на проигранном submit: %v", notified)
+		t.Errorf("progress push on a lost submit: %v", notified)
 	}
 }
 
-// TestAdvance_TerminalStatusIgnored — инвариант state machine: терминальный статус
-// (done/failed/failed_summary исключены частичным индексом, но если такой Job всё же
-// прошёл claim) попадает в ветку default — advance ничего не делает: статус не
-// двигается, нет Deliver, нет notify. Защищает от случайного повторного Fetch/Deliver
-// уже завершённой джобы. done — представитель класса терминальных статусов.
+// TestAdvance_TerminalStatusIgnored: a state machine invariant. A terminal status
+// (done/failed/failed_summary are excluded by the partial index, but if such a Job still
+// passed claim) falls into the default branch: advance does nothing, the status
+// does not move, no Deliver, no notify. Protects against an accidental repeated Fetch/Deliver
+// of an already finished job. done represents the class of terminal statuses.
 func TestAdvance_TerminalStatusIgnored(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
-	// Реальная джоба в БД, доведённая до done. SetJobDone требует pre-статус
-	// processing|summarizing (§5.7), поэтому джобу нужно провести
-	// submitted -> summarizing -> done, иначе тест проверял бы не то.
+	// A real job in the DB, brought to done. SetJobDone requires the pre-status
+	// processing|summarizing (§5.7), so the job has to go through
+	// submitted -> summarizing -> done, otherwise the test would check the wrong thing.
 	job, err := s.CreateJob(context.Background(), userID, "https://meet.google.com/adv-terminal", "mock", 180)
 	if err != nil {
 		t.Fatalf("create job: %v", err)
@@ -398,14 +398,14 @@ func TestAdvance_TerminalStatusIgnored(t *testing.T) {
 
 	status, _, _ := jobRow(t, s, job.ID)
 	if status != string(JobDone) {
-		t.Errorf("статус %q, ожидали done (терминальный не двигается)", status)
+		t.Errorf("status %q, want done (a terminal one does not move)", status)
 	}
 	if len(delivery.calls) != 0 || len(notified) != 0 {
-		t.Errorf("delivery/notify на терминальном статусе: %v / %v", delivery.calls, notified)
+		t.Errorf("delivery/notify on a terminal status: %v / %v", delivery.calls, notified)
 	}
 }
 
-// TestAdvance_PendingKeeps — Pending: статус не двигается, ничего не отправляется.
+// TestAdvance_PendingKeeps: Pending: the status does not move, nothing is sent.
 func TestAdvance_PendingKeeps(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -419,15 +419,15 @@ func TestAdvance_PendingKeeps(t *testing.T) {
 
 	status, _, _ := jobRow(t, s, job.ID)
 	if status != string(JobProcessing) {
-		t.Errorf("статус %q, ожидали processing", status)
+		t.Errorf("status %q, want processing", status)
 	}
 	if len(delivery.calls) != 0 || len(notified) != 0 {
-		t.Errorf("delivery/notify на Pending: %v / %v", delivery.calls, notified)
+		t.Errorf("delivery/notify on Pending: %v / %v", delivery.calls, notified)
 	}
 }
 
-// TestAdvance_FailedNotifies — Failed: запись failed + ровно одно уведомление
-// юзеру, доставки нет.
+// TestAdvance_FailedNotifies: Failed: a failed record + exactly one notification
+// to the user, no delivery.
 func TestAdvance_FailedNotifies(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -441,13 +441,13 @@ func TestAdvance_FailedNotifies(t *testing.T) {
 
 	status, _, _ := jobRow(t, s, job.ID)
 	if status != string(JobFailed) {
-		t.Errorf("статус %q, ожидали failed", status)
+		t.Errorf("status %q, want failed", status)
 	}
 	if len(notified) != 1 || notified[0] != userID {
-		t.Errorf("notify = %v, ожидали один вызов для %d", notified, userID)
+		t.Errorf("notify = %v, want one call for %d", notified, userID)
 	}
 	if len(delivery.calls) != 0 {
-		t.Errorf("доставка на failed: %v", delivery.calls)
+		t.Errorf("delivery on failed: %v", delivery.calls)
 	}
 }
 
@@ -463,10 +463,10 @@ func TestAdvance_FailedWithoutStopMarkerDoesNotFetch(t *testing.T) {
 	o.advance(context.Background(), job)
 
 	if provider.fetchCalls != 0 {
-		t.Fatalf("Fetch вызван %d раз без stop marker", provider.fetchCalls)
+		t.Fatalf("Fetch called %d times without a stop marker", provider.fetchCalls)
 	}
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobFailed) {
-		t.Fatalf("status = %q, ожидали failed", status)
+		t.Fatalf("status = %q, want failed", status)
 	}
 }
 
@@ -492,33 +492,33 @@ func TestAdvance_FailedWithStopMarkerFetchesTranscriptAndBills(t *testing.T) {
 	o.advance(context.Background(), job)
 
 	if provider.fetchCalls != 1 {
-		t.Fatalf("Fetch вызван %d раз, ожидали 1", provider.fetchCalls)
+		t.Fatalf("Fetch called %d times, want 1", provider.fetchCalls)
 	}
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobSummarizing) {
-		t.Fatalf("status = %q, ожидали summarizing после transcript", status)
+		t.Fatalf("status = %q, want summarizing after the transcript", status)
 	}
 	if len(delivery.calls) != 0 {
-		t.Fatalf("delivery до summary не ожидалась: %v", delivery.calls)
+		t.Fatalf("delivery before the summary was not expected: %v", delivery.calls)
 	}
 	if used := trialUsed(t, s, userID); used != 1 {
-		t.Fatalf("trial_used = %d, ожидали сохранённый резерв до terminal billing", used)
+		t.Fatalf("trial_used = %d, want the reservation kept until terminal billing", used)
 	}
 
 	job = reloadJob(t, s, job.ID)
 	o.advance(context.Background(), job)
 
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobDone) {
-		t.Fatalf("status = %q, ожидали done после summary", status)
+		t.Fatalf("status = %q, want done after the summary", status)
 	}
 	billed, duration := jobBilling(t, s, job.ID)
 	if billed != 1 {
-		t.Fatalf("billed_minutes = %d, ожидали 1 для stopped transcript duration=60s", billed)
+		t.Fatalf("billed_minutes = %d, want 1 for stopped transcript duration=60s", billed)
 	}
 	if duration == nil || *duration != 60 {
-		t.Fatalf("duration_seconds = %v, ожидали 60", duration)
+		t.Fatalf("duration_seconds = %v, want 60", duration)
 	}
 	if used := trialUsed(t, s, userID); used != 1 {
-		t.Fatalf("trial_used = %d, ожидали billable result без refund", used)
+		t.Fatalf("trial_used = %d, want a billable result without refund", used)
 	}
 }
 
@@ -555,23 +555,23 @@ func TestAdvance_FailedWithStopMarkerRecordingClosesWindowBeforeFetch(t *testing
 	o.advance(context.Background(), job)
 
 	if provider.fetchCalls != 0 {
-		t.Fatalf("Fetch вызван %d раз до фикса processing/duration", provider.fetchCalls)
+		t.Fatalf("Fetch called %d times before fixing processing/duration", provider.fetchCalls)
 	}
 	reloaded := reloadJob(t, s, job.ID)
 	if reloaded.Status != JobProcessing {
-		t.Fatalf("status = %q, ожидали processing", reloaded.Status)
+		t.Fatalf("status = %q, want processing", reloaded.Status)
 	}
 	if reloaded.DurationSeconds == nil || *reloaded.DurationSeconds < 5*60 {
-		t.Fatalf("duration_seconds = %v, ожидали зафиксированное recording window", reloaded.DurationSeconds)
+		t.Fatalf("duration_seconds = %v, want the fixed recording window", reloaded.DurationSeconds)
 	}
 
 	o.advance(context.Background(), reloaded)
 
 	if provider.fetchCalls != 1 {
-		t.Fatalf("Fetch вызван %d раз, ожидали 1 после перехода в processing", provider.fetchCalls)
+		t.Fatalf("Fetch called %d times, want 1 after the transition to processing", provider.fetchCalls)
 	}
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobSummarizing) {
-		t.Fatalf("status = %q, ожидали summarizing после fetch", status)
+		t.Fatalf("status = %q, want summarizing after fetch", status)
 	}
 }
 
@@ -593,22 +593,22 @@ func TestAdvance_FailedWithStopMarkerEmptyTranscriptRefunds(t *testing.T) {
 	o.advance(context.Background(), job)
 
 	if provider.fetchCalls != 1 {
-		t.Fatalf("Fetch вызван %d раз, ожидали 1", provider.fetchCalls)
+		t.Fatalf("Fetch called %d times, want 1", provider.fetchCalls)
 	}
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobFailed) {
-		t.Fatalf("status = %q, ожидали failed", status)
+		t.Fatalf("status = %q, want failed", status)
 	}
 	if used := trialUsed(t, s, userID); used != 0 {
-		t.Fatalf("trial_used = %d, ожидали refund", used)
+		t.Fatalf("trial_used = %d, want refund", used)
 	}
 	if len(delivery.calls) != 0 || len(delivery.groups) != 0 {
-		t.Fatalf("delivery при empty transcript: calls=%v groups=%v", delivery.calls, delivery.groups)
+		t.Fatalf("delivery on empty transcript: calls=%v groups=%v", delivery.calls, delivery.groups)
 	}
 }
 
-// TestAdvance_FailedDBErrorSkipsNotify — если запись failed не прошла, notify
-// не уходит: иначе юзер получал бы дубль «не получилось» на каждом тике,
-// пока UPDATE не успеет.
+// TestAdvance_FailedDBErrorSkipsNotify: if the failed write did not go through, notify
+// is not sent: otherwise the user would get a duplicate "did not work" on every tick
+// until the UPDATE succeeds.
 func TestAdvance_FailedDBErrorSkipsNotify(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -617,23 +617,23 @@ func TestAdvance_FailedDBErrorSkipsNotify(t *testing.T) {
 	var notified []int64
 	o := testOrchestrator(s, &MockProvider{FailOnPoll: true}, &recordingDelivery{}, &notified)
 
-	// Отменённый ctx валит FailJobWithQuotaRefund (mock на ctx не смотрит и честно отдаёт Failed).
+	// A canceled ctx fails FailJobWithQuotaRefund (the mock ignores ctx and honestly returns Failed).
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	o.advance(ctx, job)
 
 	status, _, _ := jobRow(t, s, job.ID)
 	if status != string(JobProcessing) {
-		t.Errorf("статус %q, ожидали processing (запись failed не прошла)", status)
+		t.Errorf("status %q, want processing (the failed write did not go through)", status)
 	}
 	if len(notified) != 0 {
-		t.Errorf("notify при упавшей записи failed: %v", notified)
+		t.Errorf("notify on a failed write of failed: %v", notified)
 	}
 }
 
-// TestPollJob_StaleProcessingDoesNotTimeout — processing уже значит, что бот вышел
-// и provider готовит результат. created_at больше не должен фейлить такую джобу:
-// иначе ручной stop длинной встречи около лимита сразу терял бы transcript.
+// TestPollJob_StaleProcessingDoesNotTimeout: processing already means the bot has left
+// and the provider is preparing the result. created_at must no longer fail such a job:
+// otherwise a manual stop of a long meeting near the limit would lose the transcript at once.
 func TestPollJob_StaleProcessingDoesNotTimeout(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -647,9 +647,9 @@ func TestPollJob_StaleProcessingDoesNotTimeout(t *testing.T) {
 		}
 		return u
 	}
-	usedReserved := readUsed() // после CreateJob резерв триала списан
+	usedReserved := readUsed() // the trial reservation is deducted after CreateJob
 
-	// Состариваем джобу дальше порога maxJobAge.
+	// Age the job past the maxJobAge threshold.
 	if _, err := s.pool.Exec(context.Background(),
 		`UPDATE jobs SET created_at = now() - interval '10 hours' WHERE id = $1`, job.ID); err != nil {
 		t.Fatalf("backdate job: %v", err)
@@ -665,16 +665,16 @@ func TestPollJob_StaleProcessingDoesNotTimeout(t *testing.T) {
 
 	status, _, _ := jobRow(t, s, job.ID)
 	if status != string(JobProcessing) {
-		t.Errorf("статус %q, ожидали processing (stale processing не timeout)", status)
+		t.Errorf("status %q, want processing (stale processing is not a timeout)", status)
 	}
 	if used := readUsed(); used != usedReserved {
-		t.Errorf("trial_meetings_used = %d, ожидали %d (без рефанда processing)", used, usedReserved)
+		t.Errorf("trial_meetings_used = %d, want %d (no refund for processing)", used, usedReserved)
 	}
 	if len(mp.Cancelled) != 0 {
-		t.Errorf("Cancel у поставщика = %v, ожидали no-op для processing", mp.Cancelled)
+		t.Errorf("provider Cancel = %v, want no-op for processing", mp.Cancelled)
 	}
 	if len(notified) != 0 {
-		t.Errorf("notify = %v, ожидали no-op", notified)
+		t.Errorf("notify = %v, want no-op", notified)
 	}
 }
 
@@ -708,29 +708,29 @@ func TestPollJob_StaleRecordingStopsAndWaitsForResult(t *testing.T) {
 
 	status, _, _ := jobRow(t, s, job.ID)
 	if status != string(JobProcessing) {
-		t.Fatalf("статус %q, ожидали processing после watchdog stop", status)
+		t.Fatalf("status %q, want processing after the watchdog stop", status)
 	}
 	reloaded := reloadJob(t, s, job.ID)
 	if reloaded.LastError == nil || *reloaded.LastError != jobStopWatchdog {
-		t.Fatalf("last_error = %v, ожидали %q", reloaded.LastError, jobStopWatchdog)
+		t.Fatalf("last_error = %v, want %q", reloaded.LastError, jobStopWatchdog)
 	}
 	if len(mp.Cancelled) != 1 || mp.Cancelled[0] != "ext-stale-recording" {
-		t.Fatalf("Cancel у поставщика = %v, ожидали [ext-stale-recording]", mp.Cancelled)
+		t.Fatalf("provider Cancel = %v, want [ext-stale-recording]", mp.Cancelled)
 	}
 	if len(notified) != 0 {
-		t.Fatalf("notify = %v, ожидали no-op progress без status_message_id", notified)
+		t.Fatalf("notify = %v, want no-op progress without status_message_id", notified)
 	}
 }
 
-// TestPollJob_FreshJobNotStale — негативная граница orphan-timeout (B2): свежая
-// processing-джоба (моложе maxJobAge) НЕ фейлится — проходит guard и идёт в Poll.
-// Близнец TestPollJob_StaleTimeout: вместе закрывают обе стороны порога time.Since>maxJobAge
-// (зеркало против инверсии знака сравнения). Poll вернёт Pending (DoneAfterPolls велик),
-// поэтому при исправном guard джоба остаётся processing, Cancel НЕ вызван, рефанда/notify нет.
+// TestPollJob_FreshJobNotStale: the negative boundary of the orphan timeout (B2): a fresh
+// processing job (younger than maxJobAge) is NOT failed: it passes the guard and goes to Poll.
+// Twin of TestPollJob_StaleTimeout: together they close both sides of the time.Since>maxJobAge threshold
+// (a mirror against an inverted comparison sign). Poll returns Pending (DoneAfterPolls is large),
+// so with a working guard the job stays processing, Cancel is NOT called, no refund/notify.
 func TestPollJob_FreshJobNotStale(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
-	job := processingJob(t, s, userID, "ext-fresh") // created_at = now() — свежая
+	job := processingJob(t, s, userID, "ext-fresh") // created_at = now(): fresh
 
 	readUsed := func() int {
 		var u int
@@ -740,32 +740,32 @@ func TestPollJob_FreshJobNotStale(t *testing.T) {
 		}
 		return u
 	}
-	usedReserved := readUsed() // резерв триала списан при CreateJob
+	usedReserved := readUsed() // trial reservation deducted at CreateJob
 
 	var notified []int64
 	notify := func(chatID int64, _ string) error { notified = append(notified, chatID); return nil }
-	mp := &MockProvider{DoneAfterPolls: 100} // Poll вернёт Pending — джоба не должна сдвинуться
+	mp := &MockProvider{DoneAfterPolls: 100} // Poll returns Pending: the job must not move
 	o := NewOrchestrator(s, mp, &recordingDelivery{}, NewMockSummarizer(), notify, noopEdit, time.Second, time.Hour, 10*time.Minute, 3, 180)
 
 	o.advance(context.Background(), job)
 
 	status, _, _ := jobRow(t, s, job.ID)
 	if status != string(JobProcessing) {
-		t.Errorf("статус %q, ожидали processing (свежая джоба не orphan)", status)
+		t.Errorf("status %q, want processing (a fresh job is not an orphan)", status)
 	}
 	if len(mp.Cancelled) != 0 {
-		t.Errorf("Cancel у поставщика на свежей джобе: %v", mp.Cancelled)
+		t.Errorf("provider Cancel on a fresh job: %v", mp.Cancelled)
 	}
 	if used := readUsed(); used != usedReserved {
-		t.Errorf("trial_meetings_used = %d, ожидали %d (рефанд свежей джобы)", used, usedReserved)
+		t.Errorf("trial_meetings_used = %d, want %d (refund of a fresh job)", used, usedReserved)
 	}
 	if len(notified) != 0 {
-		t.Errorf("notify на свежей processing-джобе: %v", notified)
+		t.Errorf("notify on a fresh processing job: %v", notified)
 	}
 }
 
-// summarisingJob создаёт джобу и переводит её в summarizing с заданным external id —
-// заготовка для веток summarizeJob.
+// summarisingJob creates a job and moves it to summarizing with the given external id:
+// a fixture for the summarizeJob branches.
 func summarisingJob(t *testing.T, s *Storage, userID int64, extID string) Job {
 	t.Helper()
 	job, err := s.CreateJob(context.Background(), userID, "https://meet.google.com/adv-"+extID, "mock", 180)
@@ -783,9 +783,9 @@ func summarisingJob(t *testing.T, s *Storage, userID int64, extID string) Job {
 	return job
 }
 
-// TestFinishTranscription_WaitsForSummaryDelivery — processing + Done при включенном
-// Summarizer: Fetch сохраняет raw/duration и переводит в summarizing, но НЕ доставляет
-// транскрипт заранее. Группу файлов отправит summarizeJob после summary.
+// TestFinishTranscription_WaitsForSummaryDelivery: processing + Done with the Summarizer
+// enabled: Fetch saves raw/duration and moves to summarizing, but does NOT deliver the
+// transcript in advance. summarizeJob sends the file group after the summary.
 func TestFinishTranscription_WaitsForSummaryDelivery(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -799,25 +799,25 @@ func TestFinishTranscription_WaitsForSummaryDelivery(t *testing.T) {
 
 	status, _, raw := jobRow(t, s, job.ID)
 	if status != string(JobSummarizing) {
-		t.Errorf("статус %q, ожидали summarizing", status)
+		t.Errorf("status %q, want summarizing", status)
 	}
 	if !json.Valid(raw) {
-		t.Errorf("raw_provider_response не валидный JSON: %s", raw)
+		t.Errorf("raw_provider_response is not valid JSON: %s", raw)
 	}
 	if len(delivery.calls) != 0 {
-		t.Fatalf("преждевременная доставка до summary: %v", delivery.calls)
+		t.Fatalf("premature delivery before the summary: %v", delivery.calls)
 	}
 	if len(notified) != 0 {
-		t.Errorf("notify на finishTranscription: %v", notified)
+		t.Errorf("notify on finishTranscription: %v", notified)
 	}
 }
 
-// providerSummaryText — фиксированное саммари ОТ фейка провайдера. Тест сверяет, что
-// в чат уходит именно оно (а не вывод Summarizer) — доказывает приоритет provider-summary.
+// providerSummaryText is a fixed summary FROM the provider fake. The test checks that
+// exactly it goes to the chat (not the Summarizer output), which proves the provider-summary priority.
 const providerSummaryText = "# Саммари встречи\n\nКраткое содержание."
 
-// providerWithSummary — минимальный фейк провайдера, чей Fetch возвращает непустой
-// SummaryMarkdown (тест provider-summary ветки в finishTranscription).
+// providerWithSummary is a minimal provider fake whose Fetch returns a non-empty
+// SummaryMarkdown (a test of the provider-summary branch in finishTranscription).
 type providerWithSummary struct{ MockProvider }
 
 func (p *providerWithSummary) Fetch(ctx context.Context, externalJobID string) (Result, error) {
@@ -849,9 +849,9 @@ func (p *durationFetchProvider) Fetch(ctx context.Context, externalJobID string)
 	return r, nil
 }
 
-// TestFinishTranscription_EmptyTranscriptRefunds — s2t done/code=204 или пустой txt:
-// встреча не считается успешной, файлы не отправляются, summary не запускается,
-// резерв триала откатывается, trial_done не растёт.
+// TestFinishTranscription_EmptyTranscriptRefunds: s2t done/code=204 or an empty txt:
+// the meeting does not count as successful, no files are sent, summary is not started,
+// the trial reservation is rolled back, trial_done does not grow.
 func TestFinishTranscription_EmptyTranscriptRefunds(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -870,7 +870,7 @@ func TestFinishTranscription_EmptyTranscriptRefunds(t *testing.T) {
 	job.ExternalJobID = &extID
 
 	if used := trialUsed(t, s, userID); used != 1 {
-		t.Fatalf("trial_meetings_used после резерва = %d, ожидали 1", used)
+		t.Fatalf("trial_meetings_used after the reservation = %d, want 1", used)
 	}
 
 	var notified []int64
@@ -881,25 +881,25 @@ func TestFinishTranscription_EmptyTranscriptRefunds(t *testing.T) {
 
 	status, _, _ := jobRow(t, s, job.ID)
 	if status != string(JobFailed) {
-		t.Errorf("статус %q, ожидали failed", status)
+		t.Errorf("status %q, want failed", status)
 	}
 	if used := trialUsed(t, s, userID); used != 0 {
-		t.Errorf("trial_meetings_used = %d, ожидали 0 (рефанд пустой встречи)", used)
+		t.Errorf("trial_meetings_used = %d, want 0 (refund of an empty meeting)", used)
 	}
 	if done := trialDone(t, s, userID); done != 0 {
-		t.Errorf("trial_meetings_done = %d, ожидали 0 (пустая встреча не засчитана)", done)
+		t.Errorf("trial_meetings_done = %d, want 0 (the empty meeting is not counted)", done)
 	}
 	if len(delivery.calls) != 0 {
-		t.Errorf("доставка при пустом транскрипте: %v", delivery.calls)
+		t.Errorf("delivery on an empty transcript: %v", delivery.calls)
 	}
 	if len(notified) != 1 || notified[0] != userID {
-		t.Errorf("notify = %v, ожидали только terminal failed fallback для %d", notified, userID)
+		t.Errorf("notify = %v, want only the terminal failed fallback for %d", notified, userID)
 	}
 }
 
-// TestFinishTranscription_ProviderSummary_Done — provider-summary ветка:
-// processing + Done c непустым SummaryMarkdown -> одна группа из summary+transcript,
-// статус done (минуя summarizing), raw валиден.
+// TestFinishTranscription_ProviderSummary_Done: the provider-summary branch:
+// processing + Done with a non-empty SummaryMarkdown -> one group of summary+transcript,
+// status done (bypassing summarizing), raw is valid.
 func TestFinishTranscription_ProviderSummary_Done(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -908,57 +908,57 @@ func TestFinishTranscription_ProviderSummary_Done(t *testing.T) {
 	var notified []int64
 	delivery := &recordingDelivery{}
 	notify := func(chatID int64, _ string) error { notified = append(notified, chatID); return nil }
-	// Summarizer СКОНФИГУРИРОВАН (не nil): доказываем, что provider-summary выигрывает —
-	// ветка стоит перед summarizer==nil, конспект берётся от провайдера, а не от Summarizer.
+	// The Summarizer is CONFIGURED (not nil): we prove that provider-summary wins:
+	// the branch sits before summarizer==nil, the summary comes from the provider, not from the Summarizer.
 	o := NewOrchestrator(s, &providerWithSummary{}, delivery, NewMockSummarizer(), notify, noopEdit, time.Second, time.Hour, 10*time.Minute, 3, 180)
 
 	o.advance(context.Background(), job)
 
 	status, _, raw := jobRow(t, s, job.ID)
 	if status != string(JobDone) {
-		t.Errorf("статус %q, ожидали done (provider-summary минует summarizing)", status)
+		t.Errorf("status %q, want done (provider-summary bypasses summarizing)", status)
 	}
 	if !json.Valid(raw) {
-		t.Errorf("raw_provider_response не валидный JSON: %s", raw)
+		t.Errorf("raw_provider_response is not valid JSON: %s", raw)
 	}
 	if len(delivery.calls) != 0 {
-		t.Fatalf("ожидали group-доставку без одиночных файлов, получили %d", len(delivery.calls))
+		t.Fatalf("want group delivery without single files, got %d", len(delivery.calls))
 	}
 	if len(delivery.groups) != 1 {
-		t.Fatalf("ожидали 1 группу файлов, получили %d", len(delivery.groups))
+		t.Fatalf("want 1 file group, got %d", len(delivery.groups))
 	}
 	group := delivery.groups[0]
 	if group.caption != "✅ Конспект и расшифровка встречи" {
 		t.Errorf("caption %q", group.caption)
 	}
 	if len(group.docs) != 2 {
-		t.Fatalf("ожидали 2 файла в группе, получили %d", len(group.docs))
+		t.Fatalf("want 2 files in the group, got %d", len(group.docs))
 	}
 	if want := summaryFilename(job.CreatedAt); group.docs[0].filename != want {
-		t.Errorf("summary файл %q, ожидали %q", group.docs[0].filename, want)
+		t.Errorf("summary file %q, want %q", group.docs[0].filename, want)
 	}
 	if want := transcriptFilename(job.CreatedAt); group.docs[1].filename != want {
-		t.Errorf("transcript файл %q, ожидали %q", group.docs[1].filename, want)
+		t.Errorf("transcript file %q, want %q", group.docs[1].filename, want)
 	}
 	if !strings.Contains(group.docs[0].content, providerSummaryText) {
-		t.Errorf("summary файл не содержит provider-summary: %q", group.docs[0].content)
+		t.Errorf("summary file does not contain provider-summary: %q", group.docs[0].content)
 	}
 	if !strings.Contains(group.docs[1].content, "# Транскрипт встречи") {
-		t.Errorf("transcript файл не содержит транскрипт: %q", group.docs[1].content)
+		t.Errorf("transcript file does not contain the transcript: %q", group.docs[1].content)
 	}
 	reloaded := reloadJob(t, s, job.ID)
 	if reloaded.SummaryMD == nil || *reloaded.SummaryMD != providerSummaryText {
-		t.Errorf("summary_md = %v, ожидали кэш provider-summary", reloaded.SummaryMD)
+		t.Errorf("summary_md = %v, want the cached provider-summary", reloaded.SummaryMD)
 	}
-	// status_message_id у джобы нет → статус «готово» уходит через notify-фолбэк.
+	// the job has no status_message_id -> the "done" status goes through the notify fallback.
 	if len(notified) != 1 || notified[0] != userID {
-		t.Errorf("notify (статус «готово») = %v, ожидали один для %d", notified, userID)
+		t.Errorf("notify (done status) = %v, want one for %d", notified, userID)
 	}
 }
 
-// TestFinishTranscription_SummaryOff_Done — саммари выключено (summarizer == nil,
-// SUMMARIZER_PROVIDER=off): processing + Done -> транскрипт доставлен, статус сразу
-// done (минуя summarizing), notify нет. Покрывает демо-поток без F3.
+// TestFinishTranscription_SummaryOff_Done: summary is off (summarizer == nil,
+// SUMMARIZER_PROVIDER=off): processing + Done -> the transcript is delivered, the status goes straight to
+// done (bypassing summarizing), no notify. Covers the demo flow without F3.
 func TestFinishTranscription_SummaryOff_Done(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -967,32 +967,32 @@ func TestFinishTranscription_SummaryOff_Done(t *testing.T) {
 	var notified []int64
 	delivery := &recordingDelivery{}
 	notify := func(chatID int64, _ string) error { notified = append(notified, chatID); return nil }
-	// summarizer == nil — саммари выключено.
+	// summarizer == nil: summary is off.
 	o := NewOrchestrator(s, &MockProvider{}, delivery, nil, notify, noopEdit, time.Second, time.Hour, 10*time.Minute, 3, 180)
 
 	o.advance(context.Background(), job)
 
 	status, _, raw := jobRow(t, s, job.ID)
 	if status != string(JobDone) {
-		t.Errorf("статус %q, ожидали done (саммари выключено)", status)
+		t.Errorf("status %q, want done (summary is off)", status)
 	}
 	if !json.Valid(raw) {
-		t.Errorf("raw_provider_response не валидный JSON: %s", raw)
+		t.Errorf("raw_provider_response is not valid JSON: %s", raw)
 	}
 	if len(delivery.calls) != 1 {
-		t.Fatalf("ожидали 1 доставку (транскрипт), получили %d", len(delivery.calls))
+		t.Fatalf("want 1 delivery (transcript), got %d", len(delivery.calls))
 	}
 	if want := transcriptFilename(job.CreatedAt); delivery.calls[0].filename != want {
-		t.Errorf("имя файла %q, ожидали %q", delivery.calls[0].filename, want)
+		t.Errorf("file name %q, want %q", delivery.calls[0].filename, want)
 	}
-	// status_message_id у джобы нет → статус «готово» уходит через notify-фолбэк (1 сообщение).
+	// the job has no status_message_id -> the "done" status goes through the notify fallback (1 message).
 	if len(notified) != 1 || notified[0] != userID {
-		t.Errorf("notify (статус «готово» fallback) = %v, ожидали один для %d", notified, userID)
+		t.Errorf("notify (done status fallback) = %v, want one for %d", notified, userID)
 	}
 }
 
-// TestUpdateStatus_EditsExistingMessage — при наличии status_message_id оркестратор
-// РЕДАКТИРУЕТ статус-сообщение (editStatus), а не шлёт новое (notify). UX «без спама».
+// TestUpdateStatus_EditsExistingMessage: when status_message_id exists the orchestrator
+// EDITS the status message (editStatus) instead of sending a new one (notify). UX "no spam".
 func TestUpdateStatus_EditsExistingMessage(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -1010,25 +1010,25 @@ func TestUpdateStatus_EditsExistingMessage(t *testing.T) {
 		edits = append(edits, editCall{chatID, msgID, text})
 		return nil
 	}
-	// summarizer nil → summary-off: pollJob Done → finishTranscription → done + статус «готово».
+	// summarizer nil -> summary-off: pollJob Done -> finishTranscription -> done + the "done" status.
 	o := NewOrchestrator(s, &MockProvider{}, &recordingDelivery{}, nil, notify, edit, time.Second, time.Hour, 10*time.Minute, 3, 180)
 
 	o.advance(context.Background(), job)
 
 	if len(edits) == 0 {
-		t.Fatal("editStatus не вызван при наличии status_message_id")
+		t.Fatal("editStatus was not called although status_message_id exists")
 	}
 	last := edits[len(edits)-1]
 	if last.chatID != userID || last.msgID != 555 {
-		t.Errorf("edit в (%d,%d), ожидали (%d,555)", last.chatID, last.msgID, userID)
+		t.Errorf("edit at (%d,%d), want (%d,555)", last.chatID, last.msgID, userID)
 	}
 	if len(notified) != 0 {
-		t.Errorf("notify при наличии статус-сообщения (должен быть edit): %v", notified)
+		t.Errorf("notify although a status message exists (must be edit): %v", notified)
 	}
 }
 
-// TestUpdateStatus_EditFailureFallsBackToNotify — если Telegram не дал отредактировать
-// старое сообщение, финальный статус всё равно должен появиться новым сообщением.
+// TestUpdateStatus_EditFailureFallsBackToNotify: if Telegram did not allow editing the
+// old message, the final status must still appear as a new message.
 func TestUpdateStatus_EditFailureFallsBackToNotify(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -1047,12 +1047,12 @@ func TestUpdateStatus_EditFailureFallsBackToNotify(t *testing.T) {
 	o.advance(context.Background(), job)
 
 	if len(notified) != 1 || notified[0] != userID {
-		t.Errorf("notify fallback = %v, ожидали один вызов для %d", notified, userID)
+		t.Errorf("notify fallback = %v, want one call for %d", notified, userID)
 	}
 }
 
-// TestSummarizeJob_EditsStatusOnDone — summarizing -> done должен править то же
-// статус-сообщение, иначе у пользователя остаётся «бот на встрече» после файлов.
+// TestSummarizeJob_EditsStatusOnDone: summarizing -> done must edit the same
+// status message, otherwise the user is left with "the bot is at the meeting" after the files.
 func TestSummarizeJob_EditsStatusOnDone(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -1075,24 +1075,24 @@ func TestSummarizeJob_EditsStatusOnDone(t *testing.T) {
 	o.advance(context.Background(), job)
 
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobDone) {
-		t.Fatalf("статус %q, ожидали done", status)
+		t.Fatalf("status %q, want done", status)
 	}
 	if len(edits) != 1 {
-		t.Fatalf("editStatus вызван %d раз, ожидали 1", len(edits))
+		t.Fatalf("editStatus called %d times, want 1", len(edits))
 	}
 	if edits[0].chatID != userID || edits[0].msgID != 557 {
-		t.Errorf("edit в (%d,%d), ожидали (%d,557)", edits[0].chatID, edits[0].msgID, userID)
+		t.Errorf("edit at (%d,%d), want (%d,557)", edits[0].chatID, edits[0].msgID, userID)
 	}
 	if !strings.Contains(edits[0].text, "Готово") {
-		t.Errorf("финальный статус %q не похож на done-сообщение", edits[0].text)
+		t.Errorf("final status %q does not look like a done message", edits[0].text)
 	}
 	if len(notified) != 0 {
-		t.Errorf("notify при успешном edit: %v", notified)
+		t.Errorf("notify on a successful edit: %v", notified)
 	}
 }
 
-// TestSummarizeJob_Happy — summarizing -> done:
-// доставлена одна группа файлов: summary_*.md и transcript_*.md.
+// TestSummarizeJob_Happy: summarizing -> done:
+// one file group delivered: summary_*.md and transcript_*.md.
 func TestSummarizeJob_Happy(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -1106,43 +1106,43 @@ func TestSummarizeJob_Happy(t *testing.T) {
 
 	status, _, _ := jobRow(t, s, job.ID)
 	if status != string(JobDone) {
-		t.Errorf("статус %q, ожидали done", status)
+		t.Errorf("status %q, want done", status)
 	}
 	if len(delivery.calls) != 0 {
-		t.Fatalf("ожидали group-доставку без одиночных файлов, получили %d", len(delivery.calls))
+		t.Fatalf("want group delivery without single files, got %d", len(delivery.calls))
 	}
 	if len(delivery.groups) != 1 {
-		t.Fatalf("ожидали 1 группу файлов, получили %d", len(delivery.groups))
+		t.Fatalf("want 1 file group, got %d", len(delivery.groups))
 	}
 	group := delivery.groups[0]
 	if group.chatID != userID {
-		t.Errorf("доставка в чат %d, ожидали %d", group.chatID, userID)
+		t.Errorf("delivery to chat %d, want %d", group.chatID, userID)
 	}
 	if group.caption != "✅ Конспект и расшифровка встречи" {
 		t.Errorf("caption %q", group.caption)
 	}
 	if len(group.docs) != 2 {
-		t.Fatalf("ожидали 2 файла в группе, получили %d", len(group.docs))
+		t.Fatalf("want 2 files in the group, got %d", len(group.docs))
 	}
 	if want := summaryFilename(job.CreatedAt); group.docs[0].filename != want {
-		t.Errorf("summary файл %q, ожидали %q", group.docs[0].filename, want)
+		t.Errorf("summary file %q, want %q", group.docs[0].filename, want)
 	}
 	if want := transcriptFilename(job.CreatedAt); group.docs[1].filename != want {
-		t.Errorf("transcript файл %q, ожидали %q", group.docs[1].filename, want)
+		t.Errorf("transcript file %q, want %q", group.docs[1].filename, want)
 	}
 	if !strings.Contains(group.docs[0].content, "# Конспект встречи") {
-		t.Errorf("summary файл не содержит конспект: %q", group.docs[0].content)
+		t.Errorf("summary file does not contain the summary: %q", group.docs[0].content)
 	}
 	if !strings.Contains(group.docs[1].content, "# Транскрипт встречи") {
-		t.Errorf("transcript файл не содержит транскрипт: %q", group.docs[1].content)
+		t.Errorf("transcript file does not contain the transcript: %q", group.docs[1].content)
 	}
 	if len(notified) != 1 || notified[0] != userID {
-		t.Errorf("notify fallback на happy summarize = %v, ожидали один для %d", notified, userID)
+		t.Errorf("notify fallback on happy summarize = %v, want one for %d", notified, userID)
 	}
 }
 
-// TestSummarizeJob_FailSummarize — сбой Summarizer:
-// transcript-only файл доставлен, статус failed_summary, notify вызван ровно раз.
+// TestSummarizeJob_FailSummarize: a Summarizer failure:
+// the transcript-only file is delivered, status failed_summary, notify called exactly once.
 func TestSummarizeJob_FailSummarize(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -1150,7 +1150,7 @@ func TestSummarizeJob_FailSummarize(t *testing.T) {
 
 	var notified []int64
 	delivery := &recordingDelivery{}
-	// FailOnSummarize=true: Summarize вернёт ошибку.
+	// FailOnSummarize=true: Summarize returns an error.
 	failSummarizer := &MockSummarizer{FailOnSummarize: true}
 	notify := func(chatID int64, _ string) error {
 		notified = append(notified, chatID)
@@ -1162,31 +1162,31 @@ func TestSummarizeJob_FailSummarize(t *testing.T) {
 
 	status, _, _ := jobRow(t, s, job.ID)
 	if status != string(JobFailedSummary) {
-		t.Errorf("статус %q, ожидали failed_summary", status)
+		t.Errorf("status %q, want failed_summary", status)
 	}
 	if len(notified) != 1 || notified[0] != userID {
-		t.Errorf("notify = %v, ожидали один вызов для %d", notified, userID)
+		t.Errorf("notify = %v, want one call for %d", notified, userID)
 	}
 	if len(delivery.calls) != 1 {
-		t.Fatalf("ожидали 1 доставку transcript-only, получили %d", len(delivery.calls))
+		t.Fatalf("want 1 transcript-only delivery, got %d", len(delivery.calls))
 	}
 	if want := transcriptFilename(job.CreatedAt); delivery.calls[0].filename != want {
-		t.Errorf("имя файла %q, ожидали %q", delivery.calls[0].filename, want)
+		t.Errorf("file name %q, want %q", delivery.calls[0].filename, want)
 	}
 	if !strings.Contains(delivery.calls[0].caption, "Конспект временно недоступен") {
-		t.Errorf("caption %q не объясняет сбой конспекта", delivery.calls[0].caption)
+		t.Errorf("caption %q does not explain the summary failure", delivery.calls[0].caption)
 	}
 	if strings.Contains(delivery.calls[0].content, "# Конспект встречи") {
-		t.Errorf("transcript-only документ содержит конспект: %q", delivery.calls[0].content)
+		t.Errorf("transcript-only document contains the summary: %q", delivery.calls[0].content)
 	}
 	if !strings.Contains(delivery.calls[0].content, "# Транскрипт встречи") {
-		t.Errorf("transcript-only документ не содержит транскрипт: %q", delivery.calls[0].content)
+		t.Errorf("transcript-only document does not contain the transcript: %q", delivery.calls[0].content)
 	}
 }
 
-// TestSpeech2TextFailedSummary_UsesProviderDuration — регресс prod-инцидента #38:
-// s2t может перескочить joining -> done без recording window, но result/json уже
-// содержит duration. При сбое summary billing должен взять provider duration, а не
+// TestSpeech2TextFailedSummary_UsesProviderDuration: a regression of prod incident #38:
+// s2t can jump joining -> done without a recording window, but result/json already
+// contains duration. On a summary failure billing must take the provider duration, not the
 // fallback 3600s.
 func TestSpeech2TextFailedSummary_UsesProviderDuration(t *testing.T) {
 	s := newTestStorage(t)
@@ -1214,33 +1214,33 @@ func TestSpeech2TextFailedSummary_UsesProviderDuration(t *testing.T) {
 
 	o.advance(context.Background(), job)
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobSummarizing) {
-		t.Fatalf("после fetch статус %q, ожидали summarizing", status)
+		t.Fatalf("after fetch status %q, want summarizing", status)
 	}
 
 	reloaded := reloadJob(t, s, job.ID)
 	o.advance(context.Background(), reloaded)
 
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobFailedSummary) {
-		t.Fatalf("после summary failure статус %q, ожидали failed_summary", status)
+		t.Fatalf("after summary failure status %q, want failed_summary", status)
 	}
 	billed, duration := jobBilling(t, s, job.ID)
 	if billed != 1 {
-		t.Fatalf("billed_minutes = %d, ожидали 1 для duration=6s", billed)
+		t.Fatalf("billed_minutes = %d, want 1 for duration=6s", billed)
 	}
 	if duration == nil || *duration != 6 {
-		t.Fatalf("duration_seconds = %v, ожидали 6", duration)
+		t.Fatalf("duration_seconds = %v, want 6", duration)
 	}
 	if used := trialMinutesUsed(t, s, userID); used != 1 {
-		t.Fatalf("trial_minutes_used = %d, ожидали 1", used)
+		t.Fatalf("trial_minutes_used = %d, want 1", used)
 	}
 	if done := trialMinutesDone(t, s, userID); done != 1 {
-		t.Fatalf("trial_minutes_done = %d, ожидали 1", done)
+		t.Fatalf("trial_minutes_done = %d, want 1", done)
 	}
 	if len(delivery.calls) != 1 {
-		t.Fatalf("ожидали transcript-only доставку, получили %d", len(delivery.calls))
+		t.Fatalf("want transcript-only delivery, got %d", len(delivery.calls))
 	}
 	if len(notified) != 1 || notified[0] != userID {
-		t.Fatalf("notify = %v, ожидали один для %d", notified, userID)
+		t.Fatalf("notify = %v, want one for %d", notified, userID)
 	}
 }
 
@@ -1270,7 +1270,7 @@ func TestSpeech2TextFailedSummary_KeepsRecordingWindowDuration(t *testing.T) {
 
 	o.advance(context.Background(), job)
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobSummarizing) {
-		t.Fatalf("после fetch статус %q, ожидали summarizing", status)
+		t.Fatalf("after fetch status %q, want summarizing", status)
 	}
 
 	reloaded := reloadJob(t, s, job.ID)
@@ -1278,20 +1278,20 @@ func TestSpeech2TextFailedSummary_KeepsRecordingWindowDuration(t *testing.T) {
 
 	billed, duration := jobBilling(t, s, job.ID)
 	if billed != 2 {
-		t.Fatalf("billed_minutes = %d, ожидали 2 для stored duration=61s", billed)
+		t.Fatalf("billed_minutes = %d, want 2 for stored duration=61s", billed)
 	}
 	if duration == nil || *duration != 61 {
-		t.Fatalf("duration_seconds = %v, ожидали сохранённые 61s, а не provider chunks 53s", duration)
+		t.Fatalf("duration_seconds = %v, want the stored 61s, not provider chunks 53s", duration)
 	}
 	if len(delivery.calls) != 1 {
-		t.Fatalf("ожидали transcript-only доставку, получили %d", len(delivery.calls))
+		t.Fatalf("want transcript-only delivery, got %d", len(delivery.calls))
 	}
 	if len(notified) != 1 || notified[0] != userID {
-		t.Fatalf("notify = %v, ожидали один для %d", notified, userID)
+		t.Fatalf("notify = %v, want one for %d", notified, userID)
 	}
 }
 
-// failingDelivery падает на первых failTimes вызовах, дальше успех; считает все вызовы.
+// failingDelivery fails on the first failTimes calls, then succeeds; counts all calls.
 type failingDelivery struct {
 	failTimes int
 	calls     int
@@ -1313,8 +1313,8 @@ func (d *failingDelivery) DeliverGroup(_ context.Context, _ int64, _ string, _ [
 	return nil
 }
 
-// countingSummarizer считает вызовы Summarize — для проверки, что платная генерация
-// не повторяется на ретрае доставки.
+// countingSummarizer counts Summarize calls, to check that paid generation
+// is not repeated on a delivery retry.
 type countingSummarizer struct{ calls int }
 
 func (c *countingSummarizer) Summarize(_ context.Context, _ string) (string, error) {
@@ -1322,8 +1322,8 @@ func (c *countingSummarizer) Summarize(_ context.Context, _ string) (string, err
 	return "конспект встречи", nil
 }
 
-// reloadJob перечитывает джобу из БД со всеми полями (включая SummaryMD) — оркестратор
-// на следующем тике получает её из ClaimJobsForWork именно так.
+// reloadJob rereads a job from the DB with all fields (including SummaryMD): the orchestrator
+// gets it from ClaimJobsForWork exactly this way on the next tick.
 func reloadJob(t *testing.T, s *Storage, id int64) Job {
 	t.Helper()
 	var j Job
@@ -1337,10 +1337,10 @@ func reloadJob(t *testing.T, s *Storage, id int64) Job {
 	return j
 }
 
-// TestSummarizeJob_DeliverRetryDoesNotResummarize — критический денежный узел: сбой
-// Deliver оставляет джобу summarizing с закэшированным summary; на ретрае Summarize
-// (платный LLM-вызов) НЕ повторяется — берётся кэш, идёт только доставка, джоба -> done.
-// Регресс этого = линейный рост стоимости саммари по числу транзиентных сбоев доставки.
+// TestSummarizeJob_DeliverRetryDoesNotResummarize: a critical money node. A
+// Deliver failure leaves the job in summarizing with a cached summary; on retry Summarize
+// (a paid LLM call) is NOT repeated: the cache is used, only delivery runs, the job -> done.
+// A regression here = the summary cost grows linearly with the number of transient delivery failures.
 func TestSummarizeJob_DeliverRetryDoesNotResummarize(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -1351,34 +1351,34 @@ func TestSummarizeJob_DeliverRetryDoesNotResummarize(t *testing.T) {
 	summarizer := &countingSummarizer{}
 	o := NewOrchestrator(s, &MockProvider{}, delivery, summarizer, notify, noopEdit, time.Second, time.Hour, 10*time.Minute, 3, 180)
 
-	// Тик 1: Fetch -> Summarize -> кэш summary -> Deliver ПАДАЕТ -> джоба остаётся summarizing.
+	// Tick 1: Fetch -> Summarize -> cache the summary -> Deliver FAILS -> the job stays in summarizing.
 	o.summarizeJob(context.Background(), job)
 	if summarizer.calls != 1 {
-		t.Fatalf("после тика 1 Summarize вызван %d раз, ожидали 1", summarizer.calls)
+		t.Fatalf("after tick 1 Summarize called %d times, want 1", summarizer.calls)
 	}
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobSummarizing) {
-		t.Fatalf("после сбоя Deliver статус %q, ожидали summarizing", status)
+		t.Fatalf("after Deliver failure status %q, want summarizing", status)
 	}
 	reloaded := reloadJob(t, s, job.ID)
 	if reloaded.SummaryMD == nil || *reloaded.SummaryMD == "" {
-		t.Fatal("summary_md не закэширован после генерации — ретрай пересоздаст платно")
+		t.Fatal("summary_md is not cached after generation: a retry would regenerate it for money")
 	}
 
-	// Тик 2 (cached-путь): Summarize НЕ повторяется, доставка проходит, джоба -> done.
+	// Tick 2 (cached path): Summarize is NOT repeated, delivery succeeds, the job -> done.
 	o.summarizeJob(context.Background(), reloaded)
 	if summarizer.calls != 1 {
-		t.Errorf("после тика 2 Summarize вызван %d раз — повторная ПЛАТНАЯ генерация! Ожидали 1", summarizer.calls)
+		t.Errorf("after tick 2 Summarize called %d times: repeated PAID generation! Want 1", summarizer.calls)
 	}
 	if delivery.calls != 2 {
-		t.Errorf("Deliver вызван %d раз, ожидали 2 (сбой + успех)", delivery.calls)
+		t.Errorf("Deliver called %d times, want 2 (failure + success)", delivery.calls)
 	}
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobDone) {
-		t.Errorf("после успешной доставки статус %q, ожидали done", status)
+		t.Errorf("after successful delivery status %q, want done", status)
 	}
 }
 
-// joiningJob создаёт джобу и оставляет её в joining (естественное состояние после
-// SetJobSubmitted) — стартовая точка для фазового потока поллинга.
+// joiningJob creates a job and leaves it in joining (the natural state after
+// SetJobSubmitted): the starting point for the phased polling flow.
 func joiningJob(t *testing.T, s *Storage, userID int64, extID string) Job {
 	t.Helper()
 	job, err := s.CreateJob(context.Background(), userID, "https://meet.google.com/phase-"+extID, "mock", 180)
@@ -1403,9 +1403,9 @@ func setJobProvider(t *testing.T, s *Storage, jobID int64, provider string) {
 	}
 }
 
-// scriptedProvider отдаёт заранее заданную последовательность статусов по вызовам Poll
-// (по одному на тик; после конца сценария держит последний). Позволяет смоделировать
-// и mymeet (OnCall->Transcribing->Done), и s2t (OnCall->...->Done без Transcribing).
+// scriptedProvider returns a preset sequence of statuses per Poll call
+// (one per tick; after the end of the script it holds the last one). It can model
+// both mymeet (OnCall->Transcribing->Done) and s2t (OnCall->...->Done without Transcribing).
 type scriptedProvider struct {
 	MockProvider
 	statuses []ProviderStatus
@@ -1421,20 +1421,20 @@ func (p *scriptedProvider) Poll(_ context.Context, _ string) (ProviderStatus, er
 	return p.statuses[i], nil
 }
 
-// recordingEdits собирает editStatus-вызовы; chatID берётся из status_message_id джобы.
+// recordingEdits collects editStatus calls; chatID is taken from the job's status_message_id.
 func newPhaseOrchestrator(s *Storage, p TranscriptionProvider, edits *[]editCall) *Orchestrator {
 	notify := func(int64, string) error { return nil }
 	edit := func(chatID, msgID int64, text string) error {
 		*edits = append(*edits, editCall{chatID, msgID, text})
 		return nil
 	}
-	// summarizer nil → summary-off: Done завершает джобу транскриптом, без summarizing.
+	// summarizer nil -> summary-off: Done finishes the job with the transcript, without summarizing.
 	return NewOrchestrator(s, p, &recordingDelivery{}, nil, notify, edit, time.Second, time.Hour, 10*time.Minute, 3, 180)
 }
 
-// TestPhaseFlow_Mymeet — путь mymeet: joining -> recording -> processing -> done.
-// На каждом из трёх переходов статус-сообщение редактируется РОВНО раз (moved=true),
-// тексты различаются по фазе. Done-тик правит статус на «готово» (4-я правка).
+// TestPhaseFlow_Mymeet: the mymeet path: joining -> recording -> processing -> done.
+// On each of the three transitions the status message is edited EXACTLY once (moved=true),
+// the texts differ by phase. The Done tick edits the status to "done" (the 4th edit).
 func TestPhaseFlow_Mymeet(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -1447,47 +1447,47 @@ func TestPhaseFlow_Mymeet(t *testing.T) {
 	p := &scriptedProvider{statuses: []ProviderStatus{StatusOnCall, StatusTranscribing, StatusDone}}
 	o := newPhaseOrchestrator(s, p, &edits)
 
-	// Тик 1: OnCall -> recording.
+	// Tick 1: OnCall -> recording.
 	o.advance(context.Background(), reloadJob(t, s, job.ID))
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobRecording) {
-		t.Fatalf("после тика 1 статус %q, ожидали recording", st)
+		t.Fatalf("after tick 1 status %q, want recording", st)
 	}
 	if len(edits) != 1 {
-		t.Fatalf("после тика 1 правок %d, ожидали 1 (recording)", len(edits))
+		t.Fatalf("after tick 1 edits %d, want 1 (recording)", len(edits))
 	}
 
-	// Тик 2: Transcribing -> processing.
+	// Tick 2: Transcribing -> processing.
 	o.advance(context.Background(), reloadJob(t, s, job.ID))
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobProcessing) {
-		t.Fatalf("после тика 2 статус %q, ожидали processing", st)
+		t.Fatalf("after tick 2 status %q, want processing", st)
 	}
 	if len(edits) != 2 {
-		t.Fatalf("после тика 2 правок %d, ожидали 2 (recording, processing)", len(edits))
+		t.Fatalf("after tick 2 edits %d, want 2 (recording, processing)", len(edits))
 	}
 
-	// Тик 3: Done -> done (транскрипт доставлен, статус «готово»).
+	// Tick 3: Done -> done (the transcript is delivered, status "done").
 	o.advance(context.Background(), reloadJob(t, s, job.ID))
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobDone) {
-		t.Fatalf("после тика 3 статус %q, ожидали done", st)
+		t.Fatalf("after tick 3 status %q, want done", st)
 	}
 	if len(edits) != 3 {
-		t.Fatalf("после тика 3 правок %d, ожидали 3 (recording, processing, готово)", len(edits))
+		t.Fatalf("after tick 3 edits %d, want 3 (recording, processing, done)", len(edits))
 	}
 
-	// Каждая правка — в нужное сообщение и с различимым по фазе текстом.
+	// Each edit goes to the right message and with phase-distinguishable text.
 	for i, e := range edits {
 		if e.chatID != userID || e.msgID != 700 {
-			t.Errorf("правка %d в (%d,%d), ожидали (%d,700)", i, e.chatID, e.msgID, userID)
+			t.Errorf("edit %d at (%d,%d), want (%d,700)", i, e.chatID, e.msgID, userID)
 		}
 	}
 	if edits[0].text == edits[1].text || edits[1].text == edits[2].text || edits[0].text == edits[2].text {
-		t.Errorf("тексты правок не различимы по фазе: %q / %q / %q", edits[0].text, edits[1].text, edits[2].text)
+		t.Errorf("edit texts are not distinguishable by phase: %q / %q / %q", edits[0].text, edits[1].text, edits[2].text)
 	}
 }
 
-// TestPhaseFlow_S2T — путь s2t: joining -> recording -> processing -> done.
-// s2t не отдаёт отдельный Transcribing, поэтому processing фиксируется прямо перед Done,
-// чтобы закрыть billing window.
+// TestPhaseFlow_S2T: the s2t path: joining -> recording -> processing -> done.
+// s2t does not return a separate Transcribing, so processing is recorded right before Done,
+// to close the billing window.
 func TestPhaseFlow_S2T(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -1498,35 +1498,35 @@ func TestPhaseFlow_S2T(t *testing.T) {
 	}
 
 	var edits []editCall
-	// OnCall дважды (бот ещё пишет), затем Done — Transcribing не приходит.
+	// OnCall twice (the bot is still recording), then Done: Transcribing never arrives.
 	p := &scriptedProvider{statuses: []ProviderStatus{StatusOnCall, StatusOnCall, StatusDone}}
 	o := newPhaseOrchestrator(s, p, &edits)
 
-	// Тик 1: OnCall -> recording (1 правка).
+	// Tick 1: OnCall -> recording (1 edit).
 	o.advance(context.Background(), reloadJob(t, s, job.ID))
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobRecording) {
-		t.Fatalf("после тика 1 статус %q, ожидали recording", st)
+		t.Fatalf("after tick 1 status %q, want recording", st)
 	}
 	if len(edits) != 1 {
-		t.Fatalf("после тика 1 правок %d, ожидали 1 (recording)", len(edits))
+		t.Fatalf("after tick 1 edits %d, want 1 (recording)", len(edits))
 	}
 
-	// Тик 2: OnCall на уже-recording — moved=false, второй правки НЕТ (идемпотентность).
+	// Tick 2: OnCall on an already-recording job: moved=false, NO second edit (idempotency).
 	o.advance(context.Background(), reloadJob(t, s, job.ID))
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobRecording) {
-		t.Fatalf("после тика 2 статус %q, ожидали recording (держится)", st)
+		t.Fatalf("after tick 2 status %q, want recording (holds)", st)
 	}
 	if len(edits) != 1 {
-		t.Fatalf("после тика 2 правок %d, ожидали 1 (повторный OnCall не правит)", len(edits))
+		t.Fatalf("after tick 2 edits %d, want 1 (a repeated OnCall does not edit)", len(edits))
 	}
 
-	// Тик 3: Done сначала фиксирует processing/duration, затем закрывает job.
+	// Tick 3: Done first records processing/duration, then closes the job.
 	o.advance(context.Background(), reloadJob(t, s, job.ID))
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobDone) {
-		t.Fatalf("после тика 3 статус %q, ожидали done", st)
+		t.Fatalf("after tick 3 status %q, want done", st)
 	}
 	if len(edits) != 3 {
-		t.Fatalf("после тика 3 правок %d, ожидали 3 (recording, processing, готово)", len(edits))
+		t.Fatalf("after tick 3 edits %d, want 3 (recording, processing, done)", len(edits))
 	}
 }
 
@@ -1545,40 +1545,40 @@ func TestPhaseFlow_S2T_QueuedRecordingDoesNotMeanProcessing(t *testing.T) {
 
 	o.advance(context.Background(), reloadJob(t, s, job.ID))
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobRecording) {
-		t.Fatalf("после тика 1 статус %q, ожидали recording", st)
+		t.Fatalf("after tick 1 status %q, want recording", st)
 	}
 
 	o.advance(context.Background(), reloadJob(t, s, job.ID))
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobRecording) {
-		t.Fatalf("после тика 2 статус %q, ожидали recording: очередь s2t не означает processing", st)
+		t.Fatalf("after tick 2 status %q, want recording: the s2t queue does not mean processing", st)
 	}
 	if len(edits) != 2 {
-		t.Fatalf("после тика 2 правок %d, ожидали 2 (recording, queued)", len(edits))
+		t.Fatalf("after tick 2 edits %d, want 2 (recording, queued)", len(edits))
 	}
 	if strings.Contains(edits[1].text, "Запись завершилась") || strings.Contains(edits[1].text, "Расшифровываю") {
-		t.Fatalf("тик 2 показал ложное завершение записи: %q", edits[1].text)
+		t.Fatalf("tick 2 showed a false recording end: %q", edits[1].text)
 	}
 
 	o.advance(context.Background(), reloadJob(t, s, job.ID))
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobRecording) {
-		t.Fatalf("после тика 3 статус %q, ожидали recording: повтор очереди не двигает job", st)
+		t.Fatalf("after tick 3 status %q, want recording: a queue repeat does not move the job", st)
 	}
 	if len(edits) != 2 {
-		t.Fatalf("после повтора очереди правок %d, ожидали 2 (dedupe одинакового текста)", len(edits))
+		t.Fatalf("after the queue repeat edits %d, want 2 (dedupe of identical text)", len(edits))
 	}
 
 	o.advance(context.Background(), reloadJob(t, s, job.ID))
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobDone) {
-		t.Fatalf("после тика 4 статус %q, ожидали done", st)
+		t.Fatalf("after tick 4 status %q, want done", st)
 	}
 	if len(edits) != 4 {
-		t.Fatalf("правок статуса %d, ожидали 4 (recording, queued, processing, done)", len(edits))
+		t.Fatalf("status edits %d, want 4 (recording, queued, processing, done)", len(edits))
 	}
 }
 
-// TestPhaseFlow_OnCallIdempotent — повторный OnCall на уже-recording джобе НЕ шлёт
-// второй Edit. Гарантия «правка ровно раз на фактический переход»: moved=false при
-// неизменной фазе. Изолированная проверка идемпотентности отдельно от полного потока.
+// TestPhaseFlow_OnCallIdempotent: a repeated OnCall on an already-recording job does NOT send
+// a second Edit. Guarantee "one edit per actual transition": moved=false when the
+// phase is unchanged. An isolated idempotency check, separate from the full flow.
 func TestPhaseFlow_OnCallIdempotent(t *testing.T) {
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
@@ -1596,9 +1596,9 @@ func TestPhaseFlow_OnCallIdempotent(t *testing.T) {
 	}
 
 	if st, _, _ := jobRow(t, s, job.ID); st != string(JobRecording) {
-		t.Errorf("статус %q, ожидали recording", st)
+		t.Errorf("status %q, want recording", st)
 	}
 	if len(edits) != 1 {
-		t.Errorf("правок %d, ожидали ровно 1 (только первый OnCall правит статус)", len(edits))
+		t.Errorf("edits %d, want exactly 1 (only the first OnCall edits the status)", len(edits))
 	}
 }

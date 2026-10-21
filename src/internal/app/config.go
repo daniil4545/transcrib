@@ -9,119 +9,119 @@ import (
 	"time"
 )
 
-// Config — конфигурация приложения, читается из переменных окружения.
+// Config is the application configuration, read from environment variables.
 type Config struct {
 	DatabaseURL string
 	BotToken    string
 
-	// TrialLimitMinutes — сколько бесплатных минут даём до подписки (F6, #7).
-	// Дефолт 180 — 3 часа.
+	// TrialLimitMinutes is how many free minutes we give before a subscription (F6, #7).
+	// Default 180 = 3 hours.
 	TrialLimitMinutes int
-	// SubscriptionMinutesPerPeriod — минут в оплаченном периоде подписки.
-	// Дефолт 900 — 15 часов.
+	// SubscriptionMinutesPerPeriod is the minutes in a paid subscription period.
+	// Default 900 = 15 hours.
 	SubscriptionMinutesPerPeriod int
 
-	// JobMaxAge — порог orphan/zombie-recovery: recording старше этого времени
-	// останавливается у provider и дальше ждёт transcript; no-result path возвращает резерв.
-	// Отсчёт от created_at: JOB_MAX_AGE_HOURS обязан превышать макс. длину встречи.
+	// JobMaxAge is the orphan/zombie-recovery threshold: a recording older than this
+	// is stopped at the provider and then waits for the transcript; the no-result path returns the reservation.
+	// Counted from created_at: JOB_MAX_AGE_HOURS must exceed the maximum meeting length.
 	JobMaxAge time.Duration
-	// JobStartTimeout — общий лимит старта: created/joining старше этого времени
-	// фейлятся с возвратом квоты, чтобы юзер не ждал зависшего provider'а бесконечно.
-	// 0 выключает guard для аварийного отката.
+	// JobStartTimeout is the overall start limit: created/joining older than this
+	// fail with a quota refund, so the user does not wait forever for a stuck provider.
+	// 0 disables the guard for emergency rollback.
 	JobStartTimeout time.Duration
-	// JobSubmitMaxAttempts — best-effort лимит повторов Submit в памяти процесса.
-	// 0 выключает retry-limit; durable верхнюю границу всё равно задаёт JobStartTimeout.
+	// JobSubmitMaxAttempts is a best-effort in-process limit on Submit retries.
+	// 0 disables the retry limit; the durable upper bound is still set by JobStartTimeout.
 	JobSubmitMaxAttempts int
 
-	// TranscriptionProvider — переключатель реализации поставщика.
-	// Допустимые значения: "mock" (по умолчанию), "speech2text", "mymeet".
-	// Hot-swap: одна строка в .env без пересборки кода.
+	// TranscriptionProvider selects the provider implementation.
+	// Allowed values: "mock" (default), "speech2text", "mymeet".
+	// Hot-swap: one line in .env without rebuilding the code.
 	TranscriptionProvider string
 
-	// SummarizerProvider — переключатель реализации саммари (F3).
-	// Допустимые значения: "off" (по умолчанию), "mock", "openrouter".
-	// Hot-swap: одна строка в .env без пересборки кода.
+	// SummarizerProvider selects the summary implementation (F3).
+	// Allowed values: "off" (default), "mock", "openrouter".
+	// Hot-swap: one line in .env without rebuilding the code.
 	SummarizerProvider string
 
-	// OpenRouterAPIKey — ключ OpenRouter. Обязателен при SummarizerProvider=openrouter;
-	// в логи и тексты ошибок не попадает.
+	// OpenRouterAPIKey is the OpenRouter key. Required when SummarizerProvider=openrouter;
+	// it does not appear in logs or error messages.
 	OpenRouterAPIKey string
 
-	// OpenRouterModel — slug модели саммари (api/openrouter/API.md §3).
-	// Дефолт google/gemini-2.5-flash; свап через .env без пересборки.
+	// OpenRouterModel is the summary model slug (api/openrouter/API.md §3).
+	// Default google/gemini-2.5-flash; swap via .env without rebuilding.
 	OpenRouterModel string
 
-	// OpenRouterBaseURL — базовый URL API. Дефолт https://openrouter.ai/api/v1.
+	// OpenRouterBaseURL is the API base URL. Default https://openrouter.ai/api/v1.
 	OpenRouterBaseURL string
 
-	// OpenRouterProxyURL — опциональный HTTP/SOCKS proxy только для OpenRouter.
-	// Не использовать глобальный HTTPS_PROXY: он зацепит Telegram, s2t и ЮKassa.
+	// OpenRouterProxyURL is an optional HTTP/SOCKS proxy for OpenRouter only.
+	// Do not use the global HTTPS_PROXY: it would also affect Telegram, s2t and YooKassa.
 	OpenRouterProxyURL string
 
-	// Speech2TextAPIKey — API-ключ speech2text.ru. Обязателен при
-	// TranscriptionProvider=speech2text; в логи и тексты ошибок не попадает.
+	// Speech2TextAPIKey is the speech2text.ru API key. Required when
+	// TranscriptionProvider=speech2text; it does not appear in logs or error messages.
 	Speech2TextAPIKey string
 
-	// Speech2TextBaseURL — базовый URL API. Переопределяется для тестов или
-	// при смене хоста (расхождение api.speech2text.ru vs speech2text.ru — API.md §0).
+	// Speech2TextBaseURL is the API base URL. Overridden for tests or
+	// when the host changes (api.speech2text.ru vs speech2text.ru discrepancy: API.md §0).
 	Speech2TextBaseURL string
 
-	// MymeetAPIKey — API-ключ mymeet.ai (fallback). Обязателен при
-	// TranscriptionProvider=mymeet; в логи и тексты ошибок не попадает.
+	// MymeetAPIKey is the mymeet.ai API key (fallback). Required when
+	// TranscriptionProvider=mymeet; it does not appear in logs or error messages.
 	MymeetAPIKey string
 
-	// MymeetBaseURL — базовый URL API mymeet. Дефолт https://backend.mymeet.ai.
+	// MymeetBaseURL is the mymeet API base URL. Default https://backend.mymeet.ai.
 	MymeetBaseURL string
 
-	// MymeetTemplate — template_name для record-meeting. Дефолт default-meeting.
+	// MymeetTemplate is template_name for record-meeting. Default default-meeting.
 	MymeetTemplate string
 
-	// MymeetTimezone — таймзона для local_date_time. Дефолт Europe/Moscow.
-	// Хранится строкой: time.LoadLocation вызывается в main.go рядом с
-	// конструктором провайдера (*time.Location не сериализуется обратно в строку,
-	// валидность tzdata рантайм-зависима).
+	// MymeetTimezone is the timezone for local_date_time. Default Europe/Moscow.
+	// Stored as a string: time.LoadLocation is called in main.go next to
+	// the provider constructor (*time.Location does not serialize back to a string,
+	// and tzdata validity is runtime-dependent).
 	MymeetTimezone string
 
-	// ProviderToken — provider_token из BotFather (тест/бой ЮKassa). Опционален:
-	// пусто = платёжный фасад (демо без оплаты не ломается), задан = реальный sendInvoice.
+	// ProviderToken is the provider_token from BotFather (YooKassa test/live). Optional:
+	// empty = payment facade (the demo without payment does not break), set = real sendInvoice.
 	ProviderToken string
 
-	// SubscriptionPriceKopecks — цена подписки в копейках, brutto (НДС внутри).
-	// Дефолт 199000 = 1990 ₽. КРИТИЧНО: копейки целым; в receipt уходят рублями
-	// строкой ("1990.00") — payments.md §4.4, две валютные единицы в одном инвойсе.
+	// SubscriptionPriceKopecks is the subscription price in kopecks, gross (VAT included).
+	// Default 199000 = 1990 RUB. CRITICAL: kopecks as an integer; the receipt gets rubles as a
+	// string ("1990.00"): payments.md §4.4, two currency units in one invoice.
 	SubscriptionPriceKopecks int64
-	// SubscriptionTitle/SubscriptionDescription — витрина инвойса.
+	// SubscriptionTitle/SubscriptionDescription are the invoice storefront text.
 	SubscriptionTitle       string
 	SubscriptionDescription string
-	// PaymentReturnURL — куда ЮKassa вернёт пользователя после redirect-оплаты.
-	// Не источник истины оплаты: подтверждение делает polling GET /payments/{id}.
+	// PaymentReturnURL is where YooKassa returns the user after a redirect payment.
+	// Not the source of truth for payment: confirmation is done by polling GET /payments/{id}.
 	PaymentReturnURL string
-	// PaymentPollInterval — частота проверки pending-платежей ЮKassa.
+	// PaymentPollInterval is how often YooKassa pending payments are checked.
 	PaymentPollInterval time.Duration
-	// RecurringPaymentsEnabled — отдельный рубильник merchant-initiated автосписаний.
-	// Дефолт false: live-магазин ЮKassa требует включения автоплатежей менеджером.
+	// RecurringPaymentsEnabled is a separate switch for merchant-initiated auto-charges.
+	// Default false: a live YooKassa shop requires a manager to enable auto-payments.
 	RecurringPaymentsEnabled bool
 
-	// ReceiptVatCode — vat_code позиции чека 54-ФЗ (1..12, API.md §10).
-	// Дефолт 1 — заглушка до подтверждения юр.формы заказчиком.
+	// ReceiptVatCode is the vat_code of the 54-FZ receipt item (1..12, API.md §10).
+	// Default 1 is a placeholder until the customer confirms the legal form.
 	ReceiptVatCode int
-	// ReceiptPaymentSubject/ReceiptPaymentMode — обязательны для FFD 1.05+ (API.md §9.2).
+	// ReceiptPaymentSubject/ReceiptPaymentMode are required for FFD 1.05+ (API.md §9.2).
 	ReceiptPaymentSubject string
 	ReceiptPaymentMode    string
 	ReceiptMeasure        string
-	// ReceiptTaxSystemCode — СНО продавца. Опционален: 0 = поле в receipt НЕ
-	// добавляем (слать при одной СНО = ошибка фискализации, API.md §9.1/§10.2).
+	// ReceiptTaxSystemCode is the seller's tax system. Optional: 0 = we do NOT
+	// add the field to the receipt (sending it with a single tax system = a fiscalization error, API.md §9.1/§10.2).
 	ReceiptTaxSystemCode int
 
-	// YookassaShopID/YookassaSecretKey — Basic Auth для прямых REST-refund'ов.
-	// SecretKey в логи и тексты ошибок не попадает.
+	// YookassaShopID/YookassaSecretKey are Basic Auth for direct REST refunds.
+	// SecretKey does not appear in logs or error messages.
 	YookassaShopID    string
 	YookassaSecretKey string
-	// YookassaBaseURL — базовый URL REST API. Дефолт https://api.yookassa.ru/v3.
+	// YookassaBaseURL is the REST API base URL. Default https://api.yookassa.ru/v3.
 	YookassaBaseURL string
 }
 
-// LoadConfig читает конфигурацию из окружения и валидирует обязательные поля.
+// LoadConfig reads the configuration from the environment and validates required fields.
 func LoadConfig() (Config, error) {
 	provider := os.Getenv("TRANSCRIPTION_PROVIDER")
 	if provider == "" {
@@ -130,9 +130,9 @@ func LoadConfig() (Config, error) {
 
 	summarizerProvider := os.Getenv("SUMMARIZER_PROVIDER")
 	if summarizerProvider == "" {
-		// Безопасный дефолт — off (только транскрипт): mock доставляет фейковый
-		// конспект-заглушку, что недопустимо отдавать пользователю без явного
-		// включения. Для разработки саммари провайдер задаётся в .env явно (mock).
+		// Safe default is off (transcript only): mock delivers a fake
+		// summary stub, which must not be given to a user without explicit
+		// enabling. For development, set the summary provider explicitly in .env (mock).
 		summarizerProvider = "off"
 	}
 
@@ -140,7 +140,7 @@ func LoadConfig() (Config, error) {
 	if baseURL == "" {
 		baseURL = "https://api.speech2text.ru"
 	}
-	// Хвостовой слэш из env дал бы "...ru//api/..." во всех URL провайдера.
+	// A trailing slash from env would give "...ru//api/..." in all provider URLs.
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
 	mymeetBaseURL := os.Getenv("MYMEET_BASE_URL")
@@ -216,7 +216,7 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	// tax_system_code допускает 0 (= не слать поле), поэтому не через atoiDefault (тот валидирует >0).
+	// tax_system_code allows 0 (= do not send the field), so not via atoiDefault (which validates >0).
 	taxSystemCode, err := atoiOptional("RECEIPT_TAX_SYSTEM_CODE")
 	if err != nil {
 		return Config{}, err
@@ -311,7 +311,7 @@ func LoadConfig() (Config, error) {
 
 	switch cfg.TranscriptionProvider {
 	case "mock", "speech2text", "mymeet":
-		// допустимые значения
+		// allowed values
 	default:
 		return Config{}, fmt.Errorf("config: TRANSCRIPTION_PROVIDER=%q unknown; allowed: mock, speech2text, mymeet", cfg.TranscriptionProvider)
 	}
@@ -326,7 +326,7 @@ func LoadConfig() (Config, error) {
 
 	switch cfg.SummarizerProvider {
 	case "mock", "off":
-		// "off" — саммари F3 вне скоупа (поток заканчивается доставкой транскрипта).
+		// "off": F3 summary is out of scope (the flow ends with transcript delivery).
 	case "openrouter":
 		if cfg.OpenRouterAPIKey == "" {
 			return Config{}, fmt.Errorf("config: OPENROUTER_API_KEY is required when SUMMARIZER_PROVIDER=openrouter")
@@ -418,9 +418,9 @@ func minutesFromHoursEnv(name string, defHours int) (int, error) {
 	return hours * 60, nil
 }
 
-// atoiDefault читает int-переменную окружения с дефолтом и валидацией >0.
-// Пустая переменная — дефолт; непарсимое или неположительное значение — ошибка
-// конфига (лимиты квот не должны молча сбрасываться в 0 и блокировать приём).
+// atoiDefault reads an int environment variable with a default and validation >0.
+// Empty variable: the default; an unparseable or non-positive value is a config
+// error (quota limits must not silently reset to 0 and block intake).
 func atoiDefault(name string, def int) (int, error) {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -436,7 +436,7 @@ func atoiDefault(name string, def int) (int, error) {
 	return v, nil
 }
 
-// atoiNonNegativeDefault читает int-переменную, где 0 — явный выключатель guard'а.
+// atoiNonNegativeDefault reads an int variable where 0 is an explicit guard switch.
 func atoiNonNegativeDefault(name string, def int) (int, error) {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -452,8 +452,8 @@ func atoiNonNegativeDefault(name string, def int) (int, error) {
 	return v, nil
 }
 
-// atoi64Default — как atoiDefault, но для int64 (цены в копейках выходят за
-// гарантированный диапазон int на 32-битных платформах; >0 — деньги не нулевые).
+// atoi64Default is like atoiDefault, but for int64 (kopeck prices exceed the
+// guaranteed int range on 32-bit platforms; >0: the money is non-zero).
 func atoi64Default(name string, def int64) (int64, error) {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -469,8 +469,8 @@ func atoi64Default(name string, def int64) (int64, error) {
 	return v, nil
 }
 
-// atoiOptional — int-переменная, где 0 (или пусто) — легитимное «не задано».
-// Для tax_system_code: пустое значение НЕ должно становиться вторым валидным кодом.
+// atoiOptional is an int variable where 0 (or empty) is a legitimate "not set".
+// For tax_system_code: an empty value must NOT become a second valid code.
 func atoiOptional(name string) (int, error) {
 	raw := os.Getenv(name)
 	if raw == "" {

@@ -11,18 +11,18 @@ import (
 	"time"
 )
 
-// Критический денежный узел F7 (db.md §5.4, plan §«Критические узлы под тест»):
-// идемпотентность платежа (UNIQUE telegram_payment_charge_id), независимый
-// expires_at = now()+30 дней у каждой новой строки подписки (без chain от других
-// активных периодов юзера), линковка payments.subscription_id (инвариант денежного
-// контура). Плюс два unit-узла без БД: in-memory валидация pre_checkout (§5.5) и
-// ловушка двух валютных единиц в BuildInvoice (копейки целым / рубли строкой).
-// Клей (OnCheckout/OnPayment в tg.go) сюда не входит — ручной E2E.
+// F7 critical money node (db.md §5.4, plan §"Critical nodes under test"):
+// payment idempotency (UNIQUE telegram_payment_charge_id), an independent
+// expires_at = now()+30 days for every new subscription row (no chain from the user's other
+// active periods), linking payments.subscription_id (a money-flow
+// invariant). Plus two unit nodes without a DB: in-memory pre_checkout validation (§5.5) and
+// the two-currency-unit trap in BuildInvoice (kopecks as an integer / rubles as a string).
+// The glue (OnCheckout/OnPayment in tg.go) is not included here: manual E2E.
 
-// --- unit-хелперы (БЕЗ БД) ---
+// --- unit helpers (NO DB) ---
 
-// testBilling собирает Billing с фейковым providerToken (нужен только для
-// BuildInvoice; в БД не ходит). storage=nil: unit-кейсы его не дёргают.
+// testBilling builds a Billing with a fake providerToken (needed only for
+// BuildInvoice; it does not touch the DB). storage=nil: unit cases do not call it.
 func testBilling(cfg Config) *Billing {
 	if cfg.ProviderToken == "" {
 		cfg.ProviderToken = "TEST:fake-provider-token"
@@ -30,11 +30,11 @@ func testBilling(cfg Config) *Billing {
 	return NewBilling(cfg, nil)
 }
 
-// --- интеграционные хелперы (Postgres) ---
+// --- integration helpers (Postgres) ---
 
-// cleanupPayments снимает FK ON DELETE RESTRICT (payments -> users): newTestUser
-// удаляет только jobs+user, но платежи/подписки заблокировали бы DELETE user.
-// Регистрируется ПОСЛЕ newTestUser -> по LIFO t.Cleanup отрабатывает РАНЬШЕ его.
+// cleanupPayments removes the FK ON DELETE RESTRICT (payments -> users): newTestUser
+// deletes only jobs+user, but payments/subscriptions would block DELETE user.
+// Registered AFTER newTestUser -> by LIFO t.Cleanup runs BEFORE it.
 func cleanupPayments(t *testing.T, s *Storage, userID int64) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -49,8 +49,8 @@ func cleanupPayments(t *testing.T, s *Storage, userID int64) {
 	})
 }
 
-// paymentRows возвращает все платежи юзера: статус и subscription_id (для
-// проверки линковки денежного контура). Упорядочены по id для детерминизма.
+// paymentRows returns all payments of a user: status and subscription_id (to
+// check the linking of the money flow). Ordered by id for determinism.
 func paymentRows(t *testing.T, s *Storage, userID int64) []struct {
 	status string
 	subID  *int64
@@ -82,7 +82,7 @@ func paymentRows(t *testing.T, s *Storage, userID int64) []struct {
 	return out
 }
 
-// subRows возвращает подписки юзера по возрастанию id.
+// subRows returns a user's subscriptions in ascending id order.
 func subRows(t *testing.T, s *Storage, userID int64) []struct {
 	id              int64
 	expires         time.Time
@@ -127,13 +127,13 @@ func subRows(t *testing.T, s *Storage, userID int64) []struct {
 	return out
 }
 
-// =========================== UNIT (без БД) ===========================
+// =========================== UNIT (no DB) ===========================
 
-// TestValidatePreCheckout — §5.5: pre_checkout валидирует ТОЛЬКО формат payload
-// in-memory (≤500мс, без JOIN в БД). Классы эквивалентности: валидный "sub:<id>"
-// -> true; невалидные классы (чужой префикс, мусор, пустой, нечисловой id,
-// неположительный id) -> false. Негатив проверяет, что система устояла, а не
-// упала: бизнес-логика подписки живёт в successful_payment, не здесь.
+// TestValidatePreCheckout: §5.5: pre_checkout validates ONLY the payload format
+// in-memory (<=500ms, no DB JOIN). Equivalence classes: a valid "sub:<id>"
+// -> true; invalid classes (foreign prefix, garbage, empty, non-numeric id,
+// non-positive id) -> false. The negative checks that the system held up and did not
+// crash: subscription business logic lives in successful_payment, not here.
 func TestValidatePreCheckout(t *testing.T) {
 	b := testBilling(Config{})
 	cases := []struct {
@@ -154,18 +154,18 @@ func TestValidatePreCheckout(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := b.ValidatePreCheckout(c.payload); got != c.want {
-				t.Errorf("ValidatePreCheckout(%q) = %v, ожидали %v", c.payload, got, c.want)
+				t.Errorf("ValidatePreCheckout(%q) = %v, expected %v", c.payload, got, c.want)
 			}
 		})
 	}
 }
 
-// TestBuildInvoice_TwoCurrencyUnits — ЛОВУШКА ДВУХ ВАЛЮТНЫХ ЕДИНИЦ (payments.md
-// §4.4, API.md §9): один инвойс несёт цену в ДВУХ формах. Prices[0].Amount — в
-// КОПЕЙКАХ целым (199000), а receipt.items[0].amount.value — РУБЛЯМИ строкой с
-// двумя знаками ("1990.00"). Перепутать = чек на 19.90 при списании 1990.
-// Проверяем обе формы + обязательные FFD-поля позиции (vat_code/payment_subject/
-// payment_mode). Граница taxSystemCode (0 vs >0) — отдельным subtest.
+// TestBuildInvoice_TwoCurrencyUnits: THE TWO-CURRENCY-UNIT TRAP (payments.md
+// §4.4, API.md §9): one invoice carries the price in TWO forms. Prices[0].Amount is in
+// KOPECKS as an integer (199000), while receipt.items[0].amount.value is in RUBLES as a string
+// with two decimals ("1990.00"). Mixing them up = a receipt for 19.90 while 1990 is charged.
+// We check both forms + the mandatory FFD item fields (vat_code/payment_subject/
+// payment_mode). The taxSystemCode boundary (0 vs >0) is a separate subtest.
 func TestBuildInvoice_TwoCurrencyUnits(t *testing.T) {
 	const priceKopecks = 199000
 	b := testBilling(Config{
@@ -175,64 +175,64 @@ func TestBuildInvoice_TwoCurrencyUnits(t *testing.T) {
 		ReceiptVatCode:           1,
 		ReceiptPaymentSubject:    "service",
 		ReceiptPaymentMode:       "full_payment",
-		ReceiptTaxSystemCode:     0, // СНО не задана -> поле tax_system_code НЕ добавляем
+		ReceiptTaxSystemCode:     0, // tax system not set -> we do NOT add the tax_system_code field
 	})
 
 	inv := b.BuildInvoice(42)
 
-	// Форма 1: копейки целым в Prices.
+	// Form 1: kopecks as an integer in Prices.
 	if len(inv.Prices) != 1 {
-		t.Fatalf("Prices len = %d, ожидали 1", len(inv.Prices))
+		t.Fatalf("Prices len = %d, expected 1", len(inv.Prices))
 	}
 	if inv.Prices[0].Amount != priceKopecks {
-		t.Errorf("Prices[0].Amount = %d, ожидали %d (копейки целым)", inv.Prices[0].Amount, priceKopecks)
+		t.Errorf("Prices[0].Amount = %d, expected %d (kopecks as an integer)", inv.Prices[0].Amount, priceKopecks)
 	}
 	if inv.Currency != "RUB" {
-		t.Errorf("Currency = %q, ожидали RUB", inv.Currency)
+		t.Errorf("Currency = %q, expected RUB", inv.Currency)
 	}
 	if inv.Payload != "sub:42" {
-		t.Errorf("Payload = %q, ожидали sub:42", inv.Payload)
+		t.Errorf("Payload = %q, expected sub:42", inv.Payload)
 	}
 	if inv.Start != "subscribe" {
-		t.Errorf("Start = %q, ожидали subscribe", inv.Start)
+		t.Errorf("Start = %q, expected subscribe", inv.Start)
 	}
 
-	// Форма 2: рубли строкой в provider_data (Data — JSON-строка).
+	// Form 2: rubles as a string in provider_data (Data is a JSON string).
 	receipt := receiptData(t, inv.Data)
 	item := receipt.Items[0]
 	amount, ok := item["amount"].(map[string]any)
 	if !ok {
-		t.Fatalf("receipt.items[0].amount не объект: %#v", item["amount"])
+		t.Fatalf("receipt.items[0].amount is not an object: %#v", item["amount"])
 	}
 	if got := amount["value"]; got != "1990.00" {
-		t.Errorf("amount.value = %v (%T), ожидали \"1990.00\" (рубли строкой)", got, got)
+		t.Errorf("amount.value = %v (%T), expected \"1990.00\" (rubles as a string)", got, got)
 	}
 	if got := amount["currency"]; got != "RUB" {
-		t.Errorf("amount.currency = %v, ожидали RUB", got)
+		t.Errorf("amount.currency = %v, expected RUB", got)
 	}
 
-	// Обязательные FFD-поля позиции (API.md §9.2) — без них чек не пройдёт фискализацию.
+	// Mandatory FFD item fields (API.md §9.2): without them the receipt will not pass fiscalization.
 	for _, k := range []string{"vat_code", "payment_subject", "payment_mode"} {
 		if _, present := item[k]; !present {
-			t.Errorf("receipt.items[0].%s отсутствует, ожидали наличие", k)
+			t.Errorf("receipt.items[0].%s is missing, expected it to be present", k)
 		}
 	}
 	if got := item["quantity"]; got != "1.00" {
-		t.Errorf("receipt.items[0].quantity = %v (%T), ожидали строку \"1.00\" для Telegram provider_data", got, got)
+		t.Errorf("receipt.items[0].quantity = %v (%T), expected the string \"1.00\" for Telegram provider_data", got, got)
 	}
 
-	// Граница СНО: при ReceiptTaxSystemCode==0 поля tax_system_code быть НЕ должно.
+	// Tax system boundary: with ReceiptTaxSystemCode==0 the tax_system_code field must NOT exist.
 	if _, present := receipt.Root["tax_system_code"]; present {
-		t.Errorf("receipt.tax_system_code присутствует при ReceiptTaxSystemCode=0, ожидали отсутствие (API.md §9.1)")
+		t.Errorf("receipt.tax_system_code is present with ReceiptTaxSystemCode=0, expected absence (API.md §9.1)")
 	}
 	if _, present := item["tax_system_code"]; present {
-		t.Errorf("tax_system_code присутствует при ReceiptTaxSystemCode=0, ожидали отсутствие (API.md §9.1)")
+		t.Errorf("tax_system_code is present with ReceiptTaxSystemCode=0, expected absence (API.md §9.1)")
 	}
 }
 
-// TestBuildInvoice_TaxSystemCodePresent — граница СНО (API.md §9.1): при
-// ReceiptTaxSystemCode>0 поле tax_system_code обязано присутствовать на уровне
-// receipt, не внутри items[0]. Парная граница к нулевому кейсу выше.
+// TestBuildInvoice_TaxSystemCodePresent: tax system boundary (API.md §9.1): with
+// ReceiptTaxSystemCode>0 the tax_system_code field must be present at the receipt
+// level, not inside items[0]. The paired boundary to the zero case above.
 func TestBuildInvoice_TaxSystemCodePresent(t *testing.T) {
 	b := testBilling(Config{
 		SubscriptionPriceKopecks: 199000,
@@ -247,23 +247,23 @@ func TestBuildInvoice_TaxSystemCodePresent(t *testing.T) {
 	receipt := receiptData(t, b.BuildInvoice(7).Data)
 	got, present := receipt.Root["tax_system_code"]
 	if !present {
-		t.Fatalf("receipt.tax_system_code отсутствует при ReceiptTaxSystemCode=2, ожидали наличие")
+		t.Fatalf("receipt.tax_system_code is missing with ReceiptTaxSystemCode=2, expected it to be present")
 	}
-	// JSON-числа парсятся в float64.
+	// JSON numbers are parsed as float64.
 	if got != float64(2) {
-		t.Errorf("receipt.tax_system_code = %v (%T), ожидали 2", got, got)
+		t.Errorf("receipt.tax_system_code = %v (%T), expected 2", got, got)
 	}
 	if _, present := receipt.Items[0]["tax_system_code"]; present {
-		t.Errorf("receipt.items[0].tax_system_code присутствует, ожидали СНО только на уровне receipt")
+		t.Errorf("receipt.items[0].tax_system_code is present, expected the tax system only at the receipt level")
 	}
 }
 
-// TestKopecksToRubles_Padding — граница «двух валютных единиц» на уровне форматтера
-// (payments.md §4.4): копейки -> рубли строкой через целочисленный divmod %d.%02d.
-// TestBuildInvoice_* проверяют только сумму, кратную 100 (199000 -> "1990.00"), и не
-// ловят баг zero-pad: при %d.%d пять копеек дали бы "1990.5" (= 1990.50 руб) вместо
-// "1990.05". Классы эквивалентности остатка кратко: 0 / однозначные копейки (нужен
-// ведущий ноль) / двузначные / нулевая сумма. db.md §5.4 / API.md §9.
+// TestKopecksToRubles_Padding: the "two currency units" boundary at the formatter level
+// (payments.md §4.4): kopecks -> rubles as a string via integer divmod %d.%02d.
+// TestBuildInvoice_* check only amounts that are multiples of 100 (199000 -> "1990.00") and do not
+// catch the zero-pad bug: with %d.%d five kopecks would give "1990.5" (= 1990.50 rubles) instead of
+// "1990.05". Remainder equivalence classes in brief: 0 / single-digit kopecks (a
+// leading zero is needed) / two-digit / zero amount. db.md §5.4 / API.md §9.
 func TestKopecksToRubles_Padding(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -279,7 +279,7 @@ func TestKopecksToRubles_Padding(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := kopecksToRubles(c.kopecks); got != c.want {
-				t.Errorf("kopecksToRubles(%d) = %q, ожидали %q", c.kopecks, got, c.want)
+				t.Errorf("kopecksToRubles(%d) = %q, expected %q", c.kopecks, got, c.want)
 			}
 		})
 	}
@@ -290,32 +290,32 @@ type parsedReceipt struct {
 	Items []map[string]any
 }
 
-// receiptData парсит provider_data JSON и достаёт receipt целиком.
+// receiptData parses the provider_data JSON and extracts the whole receipt.
 func receiptData(t *testing.T, data string) parsedReceipt {
 	t.Helper()
 	if data == "" {
-		t.Fatal("provider_data (Data) пуст — receipt не собран")
+		t.Fatal("provider_data (Data) is empty: receipt not assembled")
 	}
 	var parsed struct {
 		Receipt map[string]any `json:"receipt"`
 	}
 	if err := json.Unmarshal([]byte(data), &parsed); err != nil {
-		t.Fatalf("provider_data не парсится: %v (%q)", err, data)
+		t.Fatalf("provider_data does not parse: %v (%q)", err, data)
 	}
 	rawItems, ok := parsed.Receipt["items"].([]any)
 	if !ok {
-		t.Fatalf("receipt.items не массив: %#v", parsed.Receipt["items"])
+		t.Fatalf("receipt.items is not an array: %#v", parsed.Receipt["items"])
 	}
 	items := make([]map[string]any, 0, len(rawItems))
 	for _, rawItem := range rawItems {
 		item, ok := rawItem.(map[string]any)
 		if !ok {
-			t.Fatalf("receipt.items содержит не объект: %#v", rawItem)
+			t.Fatalf("receipt.items contains a non-object: %#v", rawItem)
 		}
 		items = append(items, item)
 	}
 	if len(items) != 1 {
-		t.Fatalf("receipt.items len = %d, ожидали 1", len(items))
+		t.Fatalf("receipt.items len = %d, expected 1", len(items))
 	}
 	return parsedReceipt{Root: parsed.Receipt, Items: items}
 }
@@ -351,7 +351,7 @@ func TestLoadConfig_BillingValidation(t *testing.T) {
 				t.Setenv(k, v)
 			}
 			if _, err := LoadConfig(); err == nil {
-				t.Fatal("LoadConfig() err = nil, ожидали ошибку валидации")
+				t.Fatal("LoadConfig() err = nil, expected a validation error")
 			}
 		})
 	}
@@ -365,10 +365,10 @@ func TestLoadConfig_YookassaDefaults(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	if cfg.YookassaBaseURL != "https://api.yookassa.ru/v3" {
-		t.Errorf("YookassaBaseURL = %q, ожидали default https://api.yookassa.ru/v3", cfg.YookassaBaseURL)
+		t.Errorf("YookassaBaseURL = %q, expected default https://api.yookassa.ru/v3", cfg.YookassaBaseURL)
 	}
 	if cfg.ReceiptMeasure != "piece" {
-		t.Errorf("ReceiptMeasure = %q, ожидали default piece", cfg.ReceiptMeasure)
+		t.Errorf("ReceiptMeasure = %q, expected default piece", cfg.ReceiptMeasure)
 	}
 }
 
@@ -383,13 +383,13 @@ func TestLoadConfig_ReceiptEnumsTrimmed(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	if cfg.ReceiptPaymentSubject != "service" {
-		t.Errorf("ReceiptPaymentSubject = %q, ожидали service", cfg.ReceiptPaymentSubject)
+		t.Errorf("ReceiptPaymentSubject = %q, expected service", cfg.ReceiptPaymentSubject)
 	}
 	if cfg.ReceiptPaymentMode != "full_payment" {
-		t.Errorf("ReceiptPaymentMode = %q, ожидали full_payment", cfg.ReceiptPaymentMode)
+		t.Errorf("ReceiptPaymentMode = %q, expected full_payment", cfg.ReceiptPaymentMode)
 	}
 	if cfg.ReceiptMeasure != "piece" {
-		t.Errorf("ReceiptMeasure = %q, ожидали piece", cfg.ReceiptMeasure)
+		t.Errorf("ReceiptMeasure = %q, expected piece", cfg.ReceiptMeasure)
 	}
 }
 
@@ -442,16 +442,16 @@ func TestLoadConfig_HourQuotaDefaults(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	if cfg.TrialLimitMinutes != 180 {
-		t.Errorf("TrialLimitMinutes = %d, ожидали 180", cfg.TrialLimitMinutes)
+		t.Errorf("TrialLimitMinutes = %d, expected 180", cfg.TrialLimitMinutes)
 	}
 	if cfg.SubscriptionMinutesPerPeriod != 900 {
-		t.Errorf("SubscriptionMinutesPerPeriod = %d, ожидали 900", cfg.SubscriptionMinutesPerPeriod)
+		t.Errorf("SubscriptionMinutesPerPeriod = %d, expected 900", cfg.SubscriptionMinutesPerPeriod)
 	}
 	if cfg.JobMaxAge != 6*time.Hour {
-		t.Errorf("JobMaxAge = %s, ожидали 6h", cfg.JobMaxAge)
+		t.Errorf("JobMaxAge = %s, expected 6h", cfg.JobMaxAge)
 	}
 	if cfg.SubscriptionDescription != "15 часов на 1 месяц" {
-		t.Errorf("SubscriptionDescription = %q, ожидали часы", cfg.SubscriptionDescription)
+		t.Errorf("SubscriptionDescription = %q, expected the hours wording", cfg.SubscriptionDescription)
 	}
 }
 
@@ -467,10 +467,10 @@ func TestLoadConfig_HourQuotaEnv(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	if cfg.TrialLimitMinutes != 240 {
-		t.Errorf("TrialLimitMinutes = %d, ожидали 240", cfg.TrialLimitMinutes)
+		t.Errorf("TrialLimitMinutes = %d, expected 240", cfg.TrialLimitMinutes)
 	}
 	if cfg.SubscriptionMinutesPerPeriod != 720 {
-		t.Errorf("SubscriptionMinutesPerPeriod = %d, ожидали 720", cfg.SubscriptionMinutesPerPeriod)
+		t.Errorf("SubscriptionMinutesPerPeriod = %d, expected 720", cfg.SubscriptionMinutesPerPeriod)
 	}
 }
 
@@ -491,7 +491,7 @@ func TestLoadConfig_HourQuotaValidation(t *testing.T) {
 				t.Setenv(k, v)
 			}
 			if _, err := LoadConfig(); err == nil {
-				t.Fatal("LoadConfig() err = nil, ожидали ошибку валидации")
+				t.Fatal("LoadConfig() err = nil, expected a validation error")
 			}
 		})
 	}
@@ -502,7 +502,7 @@ func TestNewBilling_UsesSubscriptionMinutes(t *testing.T) {
 		SubscriptionMinutesPerPeriod: 900,
 	})
 	if b.subscriptionMinutesPerPeriod != 900 {
-		t.Errorf("subscriptionMinutesPerPeriod = %d, ожидали 900", b.subscriptionMinutesPerPeriod)
+		t.Errorf("subscriptionMinutesPerPeriod = %d, expected 900", b.subscriptionMinutesPerPeriod)
 	}
 }
 
@@ -528,7 +528,7 @@ func TestCreateRefund_PostsYookassaRequest(t *testing.T) {
 		gotPaymentID = body.PaymentID
 		gotAmount = body.Amount.Value
 		if body.Amount.Currency != "RUB" {
-			t.Errorf("amount.currency = %q, ожидали RUB", body.Amount.Currency)
+			t.Errorf("amount.currency = %q, expected RUB", body.Amount.Currency)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -552,28 +552,28 @@ func TestCreateRefund_PostsYookassaRequest(t *testing.T) {
 		t.Fatalf("CreateRefund: %v", err)
 	}
 	if gotPath != "/refunds" {
-		t.Errorf("path = %q, ожидали /refunds", gotPath)
+		t.Errorf("path = %q, expected /refunds", gotPath)
 	}
 	if !gotAuth {
-		t.Error("BasicAuth не совпал")
+		t.Error("BasicAuth did not match")
 	}
 	if gotIDKey != "idem-1" {
-		t.Errorf("Idempotence-Key = %q, ожидали idem-1", gotIDKey)
+		t.Errorf("Idempotence-Key = %q, expected idem-1", gotIDKey)
 	}
 	if gotPaymentID != "payment-1" {
-		t.Errorf("payment_id = %q, ожидали payment-1", gotPaymentID)
+		t.Errorf("payment_id = %q, expected payment-1", gotPaymentID)
 	}
 	if gotAmount != "1990.00" {
-		t.Errorf("amount.value = %q, ожидали 1990.00", gotAmount)
+		t.Errorf("amount.value = %q, expected 1990.00", gotAmount)
 	}
 	if res.ProviderRefundID != "refund-1" {
-		t.Errorf("ProviderRefundID = %q, ожидали refund-1", res.ProviderRefundID)
+		t.Errorf("ProviderRefundID = %q, expected refund-1", res.ProviderRefundID)
 	}
 	if res.Status != RefundSucceeded {
-		t.Errorf("Status = %q, ожидали succeeded", res.Status)
+		t.Errorf("Status = %q, expected succeeded", res.Status)
 	}
 	if len(res.Raw) == 0 {
-		t.Error("Raw пуст, ожидали сырой ответ ЮKassa")
+		t.Error("Raw is empty, expected the raw YooKassa response")
 	}
 }
 
@@ -656,59 +656,59 @@ func TestCreatePayment_PostsYookassaRequest(t *testing.T) {
 		t.Fatalf("CreatePayment: %v", err)
 	}
 	if gotMethod != http.MethodPost {
-		t.Errorf("method = %q, ожидали POST", gotMethod)
+		t.Errorf("method = %q, expected POST", gotMethod)
 	}
 	if gotPath != "/payments" {
-		t.Errorf("path = %q, ожидали /payments", gotPath)
+		t.Errorf("path = %q, expected /payments", gotPath)
 	}
 	if !gotAuth {
-		t.Error("BasicAuth не совпал")
+		t.Error("BasicAuth did not match")
 	}
 	if gotIDKey != "idem-1" {
-		t.Errorf("Idempotence-Key = %q, ожидали idem-1", gotIDKey)
+		t.Errorf("Idempotence-Key = %q, expected idem-1", gotIDKey)
 	}
 	if body.Amount.Value != "1990.00" || body.Amount.Currency != "RUB" {
-		t.Errorf("amount = %#v, ожидали 1990.00 RUB", body.Amount)
+		t.Errorf("amount = %#v, expected 1990.00 RUB", body.Amount)
 	}
 	if !body.Capture {
-		t.Error("capture=false, ожидали true")
+		t.Error("capture=false, expected true")
 	}
 	if body.Confirmation.Type != "redirect" || body.Confirmation.ReturnURL != "https://transcrib.example.com/payments/return" {
-		t.Errorf("confirmation = %#v, ожидали redirect + return_url", body.Confirmation)
+		t.Errorf("confirmation = %#v, expected redirect + return_url", body.Confirmation)
 	}
 	if body.Metadata.UserID != "42" {
-		t.Errorf("metadata.user_id = %q, ожидали 42", body.Metadata.UserID)
+		t.Errorf("metadata.user_id = %q, expected 42", body.Metadata.UserID)
 	}
 	if body.Receipt.Customer.Email != "user@example.com" {
 		t.Errorf("receipt.customer.email = %q", body.Receipt.Customer.Email)
 	}
 	if len(body.Receipt.Items) != 1 {
-		t.Fatalf("receipt.items len = %d, ожидали 1", len(body.Receipt.Items))
+		t.Fatalf("receipt.items len = %d, expected 1", len(body.Receipt.Items))
 	}
 	item := body.Receipt.Items[0]
 	if item.Amount.Value != "1990.00" || item.Amount.Currency != "RUB" {
-		t.Errorf("item.amount = %#v, ожидали 1990.00 RUB", item.Amount)
+		t.Errorf("item.amount = %#v, expected 1990.00 RUB", item.Amount)
 	}
 	if item.Quantity != 1 {
-		t.Errorf("receipt item quantity = %v, ожидали число 1", item.Quantity)
+		t.Errorf("receipt item quantity = %v, expected the number 1", item.Quantity)
 	}
 	if item.VatCode != 1 || item.PaymentSubject != "service" || item.PaymentMode != "full_payment" || item.Measure != "piece" {
 		t.Errorf("receipt item fiscal fields = %#v", item)
 	}
 	if payment.ID != "payment-1" {
-		t.Errorf("payment.ID = %q, ожидали payment-1", payment.ID)
+		t.Errorf("payment.ID = %q, expected payment-1", payment.ID)
 	}
 	if payment.Status != "pending" || payment.Paid {
-		t.Errorf("payment status/paid = %q/%v, ожидали pending/false", payment.Status, payment.Paid)
+		t.Errorf("payment status/paid = %q/%v, expected pending/false", payment.Status, payment.Paid)
 	}
 	if payment.AmountKopecks != 199000 || payment.Currency != "RUB" {
-		t.Errorf("payment amount = %d %s, ожидали 199000 RUB", payment.AmountKopecks, payment.Currency)
+		t.Errorf("payment amount = %d %s, expected 199000 RUB", payment.AmountKopecks, payment.Currency)
 	}
 	if payment.ConfirmationURL != "https://yookassa.test/pay/payment-1" {
 		t.Errorf("ConfirmationURL = %q", payment.ConfirmationURL)
 	}
 	if len(payment.Raw) == 0 {
-		t.Error("Raw пуст, ожидали сырой ответ ЮKassa")
+		t.Error("Raw is empty, expected the raw YooKassa response")
 	}
 }
 
@@ -754,10 +754,10 @@ func TestCreatePayment_SavePaymentMethodOptIn(t *testing.T) {
 		t.Fatalf("CreatePayment: %v", err)
 	}
 	if body.SavePaymentMethod != "true" {
-		t.Fatalf("save_payment_method = %q, ожидали строку true для recurring", body.SavePaymentMethod)
+		t.Fatalf("save_payment_method = %q, expected the string true for recurring", body.SavePaymentMethod)
 	}
 	if body.Metadata.UserID != "42" || body.Metadata.AutoRenew != "true" {
-		t.Fatalf("metadata = %#v, ожидали user_id=42 auto_renew=true", body.Metadata)
+		t.Fatalf("metadata = %#v, expected user_id=42 auto_renew=true", body.Metadata)
 	}
 }
 
@@ -812,10 +812,10 @@ func TestCreateRecurringPayment_PostsYookassaRequest(t *testing.T) {
 		t.Fatalf("CreateRecurringPayment: %v", err)
 	}
 	if gotMethod != http.MethodPost || gotPath != "/payments" {
-		t.Fatalf("request = %s %s, ожидали POST /payments", gotMethod, gotPath)
+		t.Fatalf("request = %s %s, expected POST /payments", gotMethod, gotPath)
 	}
 	if !gotAuth {
-		t.Fatal("BasicAuth не совпал")
+		t.Fatal("BasicAuth did not match")
 	}
 	if gotIDKey != "recurring-42-1" {
 		t.Fatalf("Idempotence-Key = %q", gotIDKey)
@@ -869,25 +869,25 @@ func TestGetPayment_ParsesYookassaResponse(t *testing.T) {
 		t.Fatalf("GetPayment: %v", err)
 	}
 	if gotMethod != http.MethodGet {
-		t.Errorf("method = %q, ожидали GET", gotMethod)
+		t.Errorf("method = %q, expected GET", gotMethod)
 	}
 	if gotPath != "/payments/payment-1" {
-		t.Errorf("path = %q, ожидали /payments/payment-1", gotPath)
+		t.Errorf("path = %q, expected /payments/payment-1", gotPath)
 	}
 	if !gotAuth {
-		t.Error("BasicAuth не совпал")
+		t.Error("BasicAuth did not match")
 	}
 	if gotIDKey != "" {
-		t.Errorf("Idempotence-Key = %q, ожидали пустой header для GET", gotIDKey)
+		t.Errorf("Idempotence-Key = %q, expected an empty header for GET", gotIDKey)
 	}
 	if payment.ID != "payment-1" || payment.Status != "succeeded" || !payment.Paid {
-		t.Errorf("payment = %#v, ожидали succeeded paid payment-1", payment)
+		t.Errorf("payment = %#v, expected succeeded paid payment-1", payment)
 	}
 	if payment.AmountKopecks != 199000 || payment.Currency != "RUB" {
-		t.Errorf("payment amount = %d %s, ожидали 199000 RUB", payment.AmountKopecks, payment.Currency)
+		t.Errorf("payment amount = %d %s, expected 199000 RUB", payment.AmountKopecks, payment.Currency)
 	}
 	if len(payment.Metadata) == 0 {
-		t.Error("Metadata пуст, ожидали raw metadata")
+		t.Error("Metadata is empty, expected raw metadata")
 	}
 }
 
@@ -921,10 +921,10 @@ func TestParseYookassaPayment_PaymentMethod(t *testing.T) {
 	}
 
 	if payment.PaymentMethodID != "pm-1" {
-		t.Fatalf("PaymentMethodID = %q, ожидали pm-1", payment.PaymentMethodID)
+		t.Fatalf("PaymentMethodID = %q, expected pm-1", payment.PaymentMethodID)
 	}
 	if !payment.PaymentMethodSaved {
-		t.Fatal("PaymentMethodSaved=false, ожидали true")
+		t.Fatal("PaymentMethodSaved=false, expected true")
 	}
 }
 
@@ -944,7 +944,7 @@ func TestRublesToKopecks(t *testing.T) {
 				t.Fatalf("rublesToKopecks: %v", err)
 			}
 			if got != c.want {
-				t.Errorf("rublesToKopecks(%q) = %d, ожидали %d", c.value, got, c.want)
+				t.Errorf("rublesToKopecks(%q) = %d, expected %d", c.value, got, c.want)
 			}
 		})
 	}
@@ -978,13 +978,13 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
 
-// =========================== ИНТЕГРАЦИЯ (Postgres §5.4) ===========================
+// =========================== INTEGRATION (Postgres §5.4) ===========================
 
-// TestRecordSuccessfulPayment_Idempotent — идемпотентность §5.4: повтор того же
-// telegram_payment_charge_id (ретрай successful_payment от Telegram) НЕ задваивает
-// ни платёж, ни подписку (ON CONFLICT DO NOTHING на UNIQUE charge_id). Инварианты
-// денежного контура: ровно 1 payment (status succeeded), ровно 1 subscription,
-// payments.subscription_id НЕ NULL (refund §5.9 всегда находит подписку).
+// TestRecordSuccessfulPayment_Idempotent: idempotency §5.4: a repeat of the same
+// telegram_payment_charge_id (a successful_payment retry from Telegram) does NOT double
+// either the payment or the subscription (ON CONFLICT DO NOTHING on UNIQUE charge_id). Money-flow
+// invariants: exactly 1 payment (status succeeded), exactly 1 subscription,
+// payments.subscription_id is NOT NULL (refund §5.9 always finds the subscription).
 // db.md §5.4 / docs/testing.md.
 func TestRecordSuccessfulPayment_Idempotent(t *testing.T) {
 	ctx := context.Background()
@@ -1005,39 +1005,39 @@ func TestRecordSuccessfulPayment_Idempotent(t *testing.T) {
 	if err := s.RecordSuccessfulPayment(ctx, in, 900); err != nil {
 		t.Fatalf("RecordSuccessfulPayment #1: %v", err)
 	}
-	// Повтор с тем же charge_id — должен быть no-op.
+	// Repeat with the same charge_id: must be a no-op.
 	if err := s.RecordSuccessfulPayment(ctx, in, 900); err != nil {
-		t.Fatalf("RecordSuccessfulPayment #2 (повтор): %v", err)
+		t.Fatalf("RecordSuccessfulPayment #2 (repeat): %v", err)
 	}
 
 	pays := paymentRows(t, s, userID)
 	if len(pays) != 1 {
-		t.Fatalf("payments count = %d, ожидали 1 (идемпотентность по charge_id)", len(pays))
+		t.Fatalf("payments count = %d, expected 1 (idempotency by charge_id)", len(pays))
 	}
 	if pays[0].status != "succeeded" {
-		t.Errorf("payment.status = %q, ожидали succeeded", pays[0].status)
+		t.Errorf("payment.status = %q, expected succeeded", pays[0].status)
 	}
 	if pays[0].subID == nil {
-		t.Error("payments.subscription_id = NULL, ожидали линковку (инвариант денежного контура)")
+		t.Error("payments.subscription_id = NULL, expected a link (money-flow invariant)")
 	}
 
 	subs := subRows(t, s, userID)
 	if len(subs) != 1 {
-		t.Fatalf("subscriptions count = %d, ожидали 1 (повтор не плодит подписку)", len(subs))
+		t.Fatalf("subscriptions count = %d, expected 1 (a repeat does not spawn a subscription)", len(subs))
 	}
 	if subs[0].meetingsLimit != 15 || subs[0].meetingsBalance != 15 {
-		t.Errorf("legacy meetings = %d/%d, ожидали 15/15", subs[0].meetingsBalance, subs[0].meetingsLimit)
+		t.Errorf("legacy meetings = %d/%d, expected 15/15", subs[0].meetingsBalance, subs[0].meetingsLimit)
 	}
 	if subs[0].minutesLimit != 900 || subs[0].minutesBalance != 900 {
-		t.Errorf("minutes = %d/%d, ожидали 900/900", subs[0].minutesBalance, subs[0].minutesLimit)
+		t.Errorf("minutes = %d/%d, expected 900/900", subs[0].minutesBalance, subs[0].minutesLimit)
 	}
 	if pays[0].subID != nil && *pays[0].subID != subs[0].id {
-		t.Errorf("payment.subscription_id = %d, ожидали %d (линковка на свою подписку)", *pays[0].subID, subs[0].id)
+		t.Errorf("payment.subscription_id = %d, expected %d (link to its own subscription)", *pays[0].subID, subs[0].id)
 	}
 }
 
-// TestRecordSuccessfulPayment_NoActive — платёж без активной подписки: первый
-// период даёт expires_at ≈ now()+30 дней.
+// TestRecordSuccessfulPayment_NoActive: a payment without an active subscription: the first
+// period gives expires_at ~ now()+30 days.
 func TestRecordSuccessfulPayment_NoActive(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -1058,30 +1058,30 @@ func TestRecordSuccessfulPayment_NoActive(t *testing.T) {
 
 	subs := subRows(t, s, userID)
 	if len(subs) != 1 {
-		t.Fatalf("subscriptions count = %d, ожидали 1", len(subs))
+		t.Fatalf("subscriptions count = %d, expected 1", len(subs))
 	}
 	wantLo := before.Add(30 * 24 * time.Hour).Add(-1 * time.Hour)
 	wantHi := time.Now().Add(30 * 24 * time.Hour).Add(1 * time.Hour)
 	if subs[0].expires.Before(wantLo) || subs[0].expires.After(wantHi) {
-		t.Errorf("expires_at = %v, ожидали ≈ now()+30 дней (в окне %v..%v)", subs[0].expires, wantLo, wantHi)
+		t.Errorf("expires_at = %v, expected ~ now()+30 days (in window %v..%v)", subs[0].expires, wantLo, wantHi)
 	}
 }
 
-// TestRecordSuccessfulPayment_IndependentOfActive — при уже активной подписке
-// (истекает через ~30 дней) новый платёж создаёт ВТОРУЮ строку с expires_at ≈
-// now()+30 дней, а старая строка остаётся нетронутой (свой срок, свой остаток).
-// Периоды независимы, без chain-наращивания от старого expires_at.
+// TestRecordSuccessfulPayment_IndependentOfActive: with an already active subscription
+// (expiring in ~30 days) a new payment creates a SECOND row with expires_at ~
+// now()+30 days, while the old row stays untouched (its own term, its own balance).
+// Periods are independent, with no chain-extension from the old expires_at.
 func TestRecordSuccessfulPayment_IndependentOfActive(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
 	userID := newTestUser(t, s)
 	cleanupPayments(t, s, userID)
 
-	// Активная подписка: insertSubscription задаёт expires_at = now()+30 дней.
+	// Active subscription: insertSubscription sets expires_at = now()+30 days.
 	oldSubID := insertSubscription(t, s, userID, 5, 15)
 	subs := subRows(t, s, userID)
 	if len(subs) != 1 {
-		t.Fatalf("стартовые subscriptions = %d, ожидали 1", len(subs))
+		t.Fatalf("initial subscriptions = %d, expected 1", len(subs))
 	}
 	oldExpires := subs[0].expires
 
@@ -1099,51 +1099,51 @@ func TestRecordSuccessfulPayment_IndependentOfActive(t *testing.T) {
 
 	subs = subRows(t, s, userID)
 	if len(subs) != 2 {
-		t.Fatalf("subscriptions count = %d, ожидали 2 (повторная оплата = новая строка)", len(subs))
+		t.Fatalf("subscriptions count = %d, expected 2 (repeat payment = new row)", len(subs))
 	}
-	// Новая строка — та, что не oldSubID.
+	// The new row is the one that is not oldSubID.
 	newSub := subs[0]
 	var oldSubStillThere bool
 	for _, sub := range subs {
 		if sub.id == oldSubID {
 			oldSubStillThere = true
 			if !sub.expires.Equal(oldExpires) {
-				t.Errorf("старая подписка expires_at = %v, ожидали неизменный %v", sub.expires, oldExpires)
+				t.Errorf("old subscription expires_at = %v, expected unchanged %v", sub.expires, oldExpires)
 			}
 		} else {
 			newSub = sub
 		}
 	}
 	if !oldSubStillThere {
-		t.Fatal("старая строка подписки пропала")
+		t.Fatal("old subscription row disappeared")
 	}
 	if newSub.id == oldSubID {
-		t.Fatal("новая строка подписки не найдена")
+		t.Fatal("new subscription row not found")
 	}
 
-	// Новый период независим от старого: expires ≈ now()+30 дней, НЕ старый+30 дней.
+	// The new period is independent of the old one: expires ~ now()+30 days, NOT old+30 days.
 	wantLo := before.Add(30 * 24 * time.Hour).Add(-1 * time.Hour)
 	wantHi := time.Now().Add(30 * 24 * time.Hour).Add(1 * time.Hour)
 	if newSub.expires.Before(wantLo) || newSub.expires.After(wantHi) {
-		t.Errorf("новый expires_at = %v, ожидали ≈ now()+30 дней (окно %v..%v), без chain от старой подписки",
+		t.Errorf("new expires_at = %v, expected ~ now()+30 days (window %v..%v), without a chain from the old subscription",
 			newSub.expires, wantLo, wantHi)
 	}
 
-	// Платёж линкуется именно на новую подписку.
+	// The payment is linked specifically to the new subscription.
 	pays := paymentRows(t, s, userID)
 	if len(pays) != 1 {
-		t.Fatalf("payments count = %d, ожидали 1", len(pays))
+		t.Fatalf("payments count = %d, expected 1", len(pays))
 	}
 	if pays[0].subID == nil || *pays[0].subID != newSub.id {
-		t.Errorf("payment.subscription_id = %v, ожидали %d (новая строка)", pays[0].subID, newSub.id)
+		t.Errorf("payment.subscription_id = %v, expected %d (new row)", pays[0].subID, newSub.id)
 	}
 }
 
-// TestRecordSuccessfulPayment_ConcurrentSameUser — несколько одновременных
-// успешных платежей одного юзера создают независимые строки подписки: каждая
-// со своим expires_at ≈ now()+30 дней, без гонок/потерянных обновлений (раньше это
-// была проверка chain-сериализации; теперь новые периоды друг от друга не зависят,
-// инвариант — отсутствие ошибок и корректная линковка каждого платежа).
+// TestRecordSuccessfulPayment_ConcurrentSameUser: several simultaneous
+// successful payments of one user create independent subscription rows: each
+// with its own expires_at ~ now()+30 days, without races/lost updates (previously this
+// was a chain-serialization check; now new periods do not depend on each other,
+// the invariant is the absence of errors and correct linking of every payment).
 func TestRecordSuccessfulPayment_ConcurrentSameUser(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -1180,20 +1180,20 @@ func TestRecordSuccessfulPayment_ConcurrentSameUser(t *testing.T) {
 
 	subs := subRows(t, s, userID)
 	if len(subs) != payments {
-		t.Fatalf("subscriptions count = %d, ожидали %d", len(subs), payments)
+		t.Fatalf("subscriptions count = %d, expected %d", len(subs), payments)
 	}
 	wantLo := before.Add(30 * 24 * time.Hour).Add(-1 * time.Hour)
 	wantHi := time.Now().Add(30 * 24 * time.Hour).Add(1 * time.Hour)
 	for i, sub := range subs {
 		if sub.expires.Before(wantLo) || sub.expires.After(wantHi) {
-			t.Errorf("subscriptions[%d].expires = %v, ожидали ≈ now()+30 дней (окно %v..%v), независимо от других",
+			t.Errorf("subscriptions[%d].expires = %v, expected ~ now()+30 days (window %v..%v), independent of the others",
 				i, sub.expires, wantLo, wantHi)
 		}
 	}
 
 	pays := paymentRows(t, s, userID)
 	if len(pays) != payments {
-		t.Fatalf("payments count = %d, ожидали %d", len(pays), payments)
+		t.Fatalf("payments count = %d, expected %d", len(pays), payments)
 	}
 	for i, pay := range pays {
 		if pay.subID == nil {

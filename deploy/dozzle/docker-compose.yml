@@ -1,16 +1,16 @@
-# Веб-вьюер прод-логов transcrib. Отдельный compose-проект (НЕ трогается деплоем transcrib).
-# Поднять: cd /opt/transcrib/deploy/dozzle && docker compose -p dozzle up -d
-# Установка и проверки — README.md.
+# Web viewer of transcrib prod logs. A separate compose project (NOT touched by the transcrib deploy).
+# Bring up: cd /opt/transcrib/deploy/dozzle && docker compose -p dozzle up -d
+# Setup and checks: README.md.
 name: dozzle
 services:
   dozzle:
-    image: amir20/dozzle:v10.6.6   # проба 2026-06-18 на этой версии; обновлять осознанно
+    image: amir20/dozzle:v10.6.6   # probed on this version on 2026-06-18; update deliberately
     restart: unless-stopped
     ports:
-      - "127.0.0.1:48080:8080"     # доступ только через SSH tunnel; Docker публикует порт в обход ufw
+      - "127.0.0.1:48080:8080"     # access only through an SSH tunnel; Docker publishes the port bypassing ufw
     environment:
       DOZZLE_AUTH_PROVIDER: simple
-      DOZZLE_FILTER: "name=transcrib"     # prod + test контейнеры transcrib; соседи скрыты
+      DOZZLE_FILTER: "name=transcrib"     # prod + test transcrib containers; neighbors hidden
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro   # Dozzle бежит от root -> читает сокет 660 root:docker
-      - ./data:/data               # users.yml + настройки UI; каталог вне git (.gitignore)
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # Dozzle runs as root -> reads the 660 root:docker socket
+      - ./data:/data               # users.yml + UI settings; directory outside git (.gitignore)

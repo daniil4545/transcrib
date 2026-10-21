@@ -6,9 +6,10 @@ import (
 	"testing"
 )
 
-// Проводка промпта: первая строка summary_prompt.txt обязана попадать в вывод
-// MockSummarizer. Это критерий приёмки E2E (замена промпта меняет результат) на
-// уровне unit — без него embed->output-связь покрыта только ручным прогоном.
+// Prompt wiring: the first line of summary_prompt.txt must appear in the output of
+// MockSummarizer. This is the E2E acceptance criterion (replacing the prompt changes
+// the result) at unit level: without it the embed->output link is covered only by a
+// manual run.
 func TestMockSummarizer_PromptWiredIntoOutput(t *testing.T) {
 	m := NewMockSummarizer()
 
@@ -19,6 +20,6 @@ func TestMockSummarizer_PromptWiredIntoOutput(t *testing.T) {
 
 	firstLine := strings.SplitN(defaultSummaryPrompt, "\n", 2)[0]
 	if !strings.Contains(out, firstLine) {
-		t.Errorf("первая строка промпта не попала в вывод\nпромпт: %q\nвывод: %q", firstLine, out)
+		t.Errorf("first prompt line is missing from the output\nprompt: %q\noutput: %q", firstLine, out)
 	}
 }

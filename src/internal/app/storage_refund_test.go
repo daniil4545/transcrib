@@ -7,18 +7,18 @@ import (
 	"time"
 )
 
-// Критический денежный узел F7 (db.md §5.9, plan-payments-slice §P2): двухфазный
-// refund в storage. Точечные тесты ТОЛЬКО на инварианты возврата:
-// идемпотентность намерения (BeginRefund), идемпотентность финализации (FinalizeRefund),
-// деактивация ровно своей подписки (модель 1:1), сохранение доступа при failed/canceled,
-// сентинел на нерефандабельный платёж. REST-фаза billing.Refund/admin-триггер — за блокером
-// (нужны креды ЮKassa), здесь не тестируются. Интеграционные, бьют в Postgres через
-// DATABASE_URL; без него — Skip (newTestStorage).
+// F7 critical money node (db.md §5.9, plan-payments-slice §P2): two-phase
+// refund in storage. Targeted tests ONLY for refund invariants:
+// intent idempotency (BeginRefund), finalization idempotency (FinalizeRefund),
+// deactivating exactly its own subscription (1:1 model), keeping access on failed/canceled,
+// a sentinel for a non-refundable payment. The REST phase billing.Refund/admin trigger is behind a blocker
+// (needs YooKassa credentials) and is not tested here. Integration tests that hit Postgres via
+// DATABASE_URL; without it they Skip (newTestStorage).
 
-// cleanupRefunds снимает FK refunds -> payments (плейн FK, без ON DELETE CASCADE):
-// cleanupPayments удаляет платежи, но строки refunds заблокировали бы этот DELETE.
-// Регистрируется ПОСЛЕ cleanupPayments -> по LIFO t.Cleanup отрабатывает РАНЬШЕ него
-// (порядок уборки: refunds -> payments -> subscriptions -> user).
+// cleanupRefunds removes the FK refunds -> payments (plain FK, no ON DELETE CASCADE):
+// cleanupPayments deletes payments, but refunds rows would block that DELETE.
+// Registered AFTER cleanupPayments -> by LIFO t.Cleanup runs BEFORE it
+// (cleanup order: refunds -> payments -> subscriptions -> user).
 func cleanupRefunds(t *testing.T, s *Storage, userID int64) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -31,9 +31,9 @@ func cleanupRefunds(t *testing.T, s *Storage, userID int64) {
 	})
 }
 
-// seedPayment кладёт один успешный платёж + связанную подписку через §5.4
-// (RecordSuccessfulPayment) и возвращает providerChargeID для BeginRefund плюс
-// id связанной подписки (для проверки деактивации именно своей строки 1:1).
+// seedPayment inserts one successful payment + the linked subscription via §5.4
+// (RecordSuccessfulPayment) and returns providerChargeID for BeginRefund plus
+// the id of the linked subscription (to check deactivation of exactly its own 1:1 row).
 func seedPayment(t *testing.T, s *Storage, userID int64, tgCharge, provCharge string) (providerChargeID string, subID int64) {
 	t.Helper()
 	in := PaymentInput{
@@ -56,7 +56,7 @@ func seedPayment(t *testing.T, s *Storage, userID int64, tgCharge, provCharge st
 	return provCharge, subID
 }
 
-// paymentStatusByCharge читает payments.status по provider_payment_charge_id.
+// paymentStatusByCharge reads payments.status by provider_payment_charge_id.
 func paymentStatusByCharge(t *testing.T, s *Storage, provCharge string) string {
 	t.Helper()
 	var status string
@@ -68,7 +68,7 @@ func paymentStatusByCharge(t *testing.T, s *Storage, provCharge string) string {
 	return status
 }
 
-// subActive сообщает, активна ли подписка (expires_at > now()).
+// subActive reports whether the subscription is active (expires_at > now()).
 func subActive(t *testing.T, s *Storage, subID int64) bool {
 	t.Helper()
 	var active bool
@@ -80,7 +80,7 @@ func subActive(t *testing.T, s *Storage, subID int64) bool {
 	return active
 }
 
-// refundCountByPayment считает строки refunds для платежа провайдера.
+// refundCountByPayment counts refunds rows for a provider payment.
 func refundCountByPayment(t *testing.T, s *Storage, provCharge string) int {
 	t.Helper()
 	var n int
@@ -93,7 +93,7 @@ func refundCountByPayment(t *testing.T, s *Storage, provCharge string) int {
 	return n
 }
 
-// refundProviderID читает provider_refund_id (nil = NULL).
+// refundProviderID reads provider_refund_id (nil = NULL).
 func refundProviderID(t *testing.T, s *Storage, refundID int64) *string {
 	t.Helper()
 	var pid *string
@@ -105,11 +105,11 @@ func refundProviderID(t *testing.T, s *Storage, refundID int64) *string {
 	return pid
 }
 
-// TestBeginRefund_DoubleIntentIdempotent — §5.9 фаза 1: двойной BeginRefund на один
-// платёж даёт ОДНУ pending-строку (refunds_active_idx, partial UNIQUE на payment_id).
-// Второй вызов отдаёт ТОТ ЖЕ refundID и idemKey (идемпотентность намерения: один и тот
-// же Idempotence-Key переживает наш ретрай, защищая от двойного списания у ЮKassa).
-// В таблице ровно один refund по платежу. db.md §5.9 / docs/testing.md.
+// TestBeginRefund_DoubleIntentIdempotent: §5.9 phase 1: a double BeginRefund for one
+// payment yields ONE pending row (refunds_active_idx, partial UNIQUE on payment_id).
+// The second call returns the SAME refundID and idemKey (intent idempotency: one and the
+// same Idempotence-Key survives our retry, protecting against a double charge at YooKassa).
+// The table holds exactly one refund per payment. db.md §5.9 / docs/testing.md.
 func TestBeginRefund_DoubleIntentIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -124,32 +124,32 @@ func TestBeginRefund_DoubleIntentIdempotent(t *testing.T) {
 		t.Fatalf("BeginRefund #1: %v", err)
 	}
 	if amt1 != 199000 {
-		t.Errorf("amount = %d, ожидали 199000 (full-only из payments)", amt1)
+		t.Errorf("amount = %d, expected 199000 (full-only from payments)", amt1)
 	}
 
 	id2, key2, amt2, err := s.BeginRefund(ctx, prov)
 	if err != nil {
-		t.Fatalf("BeginRefund #2 (повтор намерения): %v", err)
+		t.Fatalf("BeginRefund #2 (intent repeat): %v", err)
 	}
 	if id2 != id1 {
-		t.Errorf("refundID #2 = %d, ожидали тот же %d (идемпотентность намерения)", id2, id1)
+		t.Errorf("refundID #2 = %d, expected the same %d (intent idempotency)", id2, id1)
 	}
 	if key2 != key1 {
-		t.Errorf("idemKey #2 = %q, ожидали тот же %q (Idempotence-Key переживает ретрай)", key2, key1)
+		t.Errorf("idemKey #2 = %q, expected the same %q (Idempotence-Key survives a retry)", key2, key1)
 	}
 	if amt2 != amt1 {
-		t.Errorf("amount #2 = %d, ожидали тот же %d", amt2, amt1)
+		t.Errorf("amount #2 = %d, expected the same %d", amt2, amt1)
 	}
 	if n := refundCountByPayment(t, s, prov); n != 1 {
-		t.Errorf("refunds count = %d, ожидали 1 (refunds_active_idx гасит дубль)", n)
+		t.Errorf("refunds count = %d, expected 1 (refunds_active_idx suppresses the duplicate)", n)
 	}
 }
 
-// TestFinalizeRefund_SucceededDeactivatesOwnSubscription — §5.9 фаза 2 (succeeded):
-// payment -> 'refunded' И деактивируется РОВНО та строка подписки, что купил платёж
-// (модель 1:1, expires_at<=now()). Изоляция 1:1: у юзера есть ВТОРОЙ платёж/подписка —
-// refund первого НЕ задевает второй активный период. Повторный FinalizeRefund — no-op
-// (guard status='pending'): payment/subscription не меняются повторно. db.md §5.9.
+// TestFinalizeRefund_SucceededDeactivatesOwnSubscription: §5.9 phase 2 (succeeded):
+// payment -> 'refunded' AND EXACTLY the subscription row bought by the payment is deactivated
+// (1:1 model, expires_at<=now()). 1:1 isolation: the user has a SECOND payment/subscription,
+// and refunding the first does NOT touch the second active period. A repeated FinalizeRefund is a no-op
+// (guard status='pending'): payment/subscription do not change again. db.md §5.9.
 func TestFinalizeRefund_SucceededDeactivatesOwnSubscription(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -159,10 +159,10 @@ func TestFinalizeRefund_SucceededDeactivatesOwnSubscription(t *testing.T) {
 
 	prov1, sub1 := seedPayment(t, s, userID, "tg-fin-1", "yk-fin-1")
 	insertRecurringProfile(t, s, userID, "pm-refund-1", "active", time.Now().Add(24*time.Hour))
-	// Второй оплаченный период того же юзера: должен остаться нетронутым.
+	// A second paid period of the same user: must stay untouched.
 	prov2, sub2 := seedPayment(t, s, userID, "tg-fin-2", "yk-fin-2")
 	if sub1 == sub2 {
-		t.Fatal("seed дал одну подписку на два платежа — модель 1:1 нарушена в подготовке")
+		t.Fatal("seed produced one subscription for two payments: the 1:1 model is violated in setup")
 	}
 
 	refundID, _, _, err := s.BeginRefund(ctx, prov1)
@@ -174,10 +174,10 @@ func TestFinalizeRefund_SucceededDeactivatesOwnSubscription(t *testing.T) {
 		t.Fatalf("FinalizeRefund #1: %v", err)
 	}
 	if got := paymentStatusByCharge(t, s, prov1); got != string(PaymentRefunded) {
-		t.Errorf("payment #1 status = %q, ожидали refunded", got)
+		t.Errorf("payment #1 status = %q, expected refunded", got)
 	}
 	if subActive(t, s, sub1) {
-		t.Error("подписка #1 активна, ожидали деактивацию (expires_at<=now())")
+		t.Error("subscription #1 is active, expected deactivation (expires_at<=now())")
 	}
 	profile, ok, err := s.RecurringProfile(ctx, userID)
 	if err != nil {
@@ -187,10 +187,10 @@ func TestFinalizeRefund_SucceededDeactivatesOwnSubscription(t *testing.T) {
 		t.Fatalf("recurring profile not found")
 	}
 	if profile.Status != "disabled" || profile.DisabledAt == nil {
-		t.Fatalf("recurring profile = %+v, ожидали disabled после refund", profile)
+		t.Fatalf("recurring profile = %+v, expected disabled after refund", profile)
 	}
 	if profile.PaymentMethodID != "" {
-		t.Fatalf("recurring profile payment method = %q, ожидали пустой token после refund", profile.PaymentMethodID)
+		t.Fatalf("recurring profile payment method = %q, expected an empty token after refund", profile.PaymentMethodID)
 	}
 	var tokenErased bool
 	if err := s.pool.QueryRow(ctx,
@@ -200,31 +200,31 @@ func TestFinalizeRefund_SucceededDeactivatesOwnSubscription(t *testing.T) {
 		t.Fatalf("check recurring token erased: %v", err)
 	}
 	if !tokenErased {
-		t.Fatal("recurring profile payment_method_id не очищен после refund")
+		t.Fatal("recurring profile payment_method_id not cleared after refund")
 	}
-	// Изоляция 1:1: второй платёж/период не затронут возвратом первого.
+	// 1:1 isolation: the second payment/period is not affected by the refund of the first.
 	if got := paymentStatusByCharge(t, s, prov2); got != string(PaymentSucceeded) {
-		t.Errorf("payment #2 status = %q, ожидали succeeded (refund первого задел второй)", got)
+		t.Errorf("payment #2 status = %q, expected succeeded (refund of the first touched the second)", got)
 	}
 	if !subActive(t, s, sub2) {
-		t.Error("подписка #2 деактивирована, ожидали активной (refund первого задел второй период)")
+		t.Error("subscription #2 is deactivated, expected active (refund of the first touched the second period)")
 	}
 
-	// Повторная финализация (повторный webhook/триггер) — no-op по guard status='pending'.
+	// Repeated finalization (repeated webhook/trigger): a no-op by the status='pending' guard.
 	if err := s.FinalizeRefund(ctx, refundID, "yk-refund-1", RefundSucceeded, []byte(`{"status":"succeeded"}`)); err != nil {
-		t.Fatalf("FinalizeRefund #2 (повтор): %v", err)
+		t.Fatalf("FinalizeRefund #2 (repeat): %v", err)
 	}
 	if got := paymentStatusByCharge(t, s, prov1); got != string(PaymentRefunded) {
-		t.Errorf("payment #1 status после повтора = %q, ожидали refunded (идемпотентность)", got)
+		t.Errorf("payment #1 status after repeat = %q, expected refunded (idempotency)", got)
 	}
 	if subActive(t, s, sub1) {
-		t.Error("подписка #1 после повтора активна — повторная финализация не должна ничего трогать")
+		t.Error("subscription #1 is active after repeat: repeated finalization must not touch anything")
 	}
 }
 
-// TestFinalizeRefund_FailedAndCanceledKeepAccess — §5.9 фаза 2 (failed/canceled):
-// деньги НЕ вернулись -> payment остаётся 'succeeded', подписка активна (доступ
-// сохраняется). Два терминальных не-succeeded статуса ЮKassa проверяем симметрично.
+// TestFinalizeRefund_FailedAndCanceledKeepAccess: §5.9 phase 2 (failed/canceled):
+// money was NOT returned -> payment stays 'succeeded', subscription is active (access
+// is kept). We check the two terminal non-succeeded YooKassa statuses symmetrically.
 func TestFinalizeRefund_FailedAndCanceledKeepAccess(t *testing.T) {
 	ctx := context.Background()
 
@@ -255,18 +255,18 @@ func TestFinalizeRefund_FailedAndCanceledKeepAccess(t *testing.T) {
 				t.Fatalf("FinalizeRefund(%s): %v", c.status, err)
 			}
 			if got := paymentStatusByCharge(t, s, prov); got != string(PaymentSucceeded) {
-				t.Errorf("payment status = %q, ожидали succeeded (деньги не вернулись при %s)", got, c.status)
+				t.Errorf("payment status = %q, expected succeeded (money not returned on %s)", got, c.status)
 			}
 			if !subActive(t, s, subID) {
-				t.Errorf("подписка деактивирована при %s, ожидали активной (доступ сохраняется)", c.status)
+				t.Errorf("subscription deactivated on %s, expected active (access is kept)", c.status)
 			}
 		})
 	}
 }
 
-// TestBeginRefund_NotRefundable — §5.9: BeginRefund по несуществующему платежу и по
-// платежу не в статусе succeeded возвращает ErrPaymentNotRefundable (возвращать нечего).
-// Класс «не succeeded» проверяем на pending-платеже прямым INSERT.
+// TestBeginRefund_NotRefundable: §5.9: BeginRefund for a non-existent payment and for a
+// payment not in succeeded status returns ErrPaymentNotRefundable (nothing to refund).
+// The "not succeeded" class is checked on a pending payment via a direct INSERT.
 func TestBeginRefund_NotRefundable(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -275,10 +275,10 @@ func TestBeginRefund_NotRefundable(t *testing.T) {
 	cleanupRefunds(t, s, userID)
 
 	if _, _, _, err := s.BeginRefund(ctx, "yk-does-not-exist"); !errors.Is(err, ErrPaymentNotRefundable) {
-		t.Errorf("BeginRefund(несуществующий) err = %v, ожидали ErrPaymentNotRefundable", err)
+		t.Errorf("BeginRefund(non-existent) err = %v, expected ErrPaymentNotRefundable", err)
 	}
 
-	// pending-платёж: succeeded-предиката нет, refund невозможен.
+	// pending payment: no succeeded predicate, refund is impossible.
 	if _, err := s.pool.Exec(ctx,
 		`INSERT INTO payments (user_id, status, amount, currency, provider_payment_charge_id)
 		 VALUES ($1, 'pending', 199000, 'RUB', $2)`,
@@ -287,15 +287,15 @@ func TestBeginRefund_NotRefundable(t *testing.T) {
 		t.Fatalf("insert pending payment: %v", err)
 	}
 	if _, _, _, err := s.BeginRefund(ctx, "yk-pending"); !errors.Is(err, ErrPaymentNotRefundable) {
-		t.Errorf("BeginRefund(pending) err = %v, ожидали ErrPaymentNotRefundable", err)
+		t.Errorf("BeginRefund(pending) err = %v, expected ErrPaymentNotRefundable", err)
 	}
 }
 
-// TestFinalizeRefund_EmptyProviderIDStoredAsNull — §5.9: пустой providerRefundID
-// (failed/canceled не несут id у ЮKassa) хранится как NULL, а не пустая строка —
-// иначе несколько таких строк столкнулись бы в refunds_provider_idx (partial UNIQUE,
-// который NULL коллизией не считает). Проверяем два refund'а с пустым id у разных
-// платежей: оба сохраняются NULL, индекс не падает.
+// TestFinalizeRefund_EmptyProviderIDStoredAsNull: §5.9: an empty providerRefundID
+// (failed/canceled carry no id at YooKassa) is stored as NULL, not an empty string:
+// otherwise several such rows would collide in refunds_provider_idx (partial UNIQUE,
+// which does not count NULL as a collision). We check two refunds with an empty id for different
+// payments: both are stored as NULL, the index does not fail.
 func TestFinalizeRefund_EmptyProviderIDStoredAsNull(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -315,17 +315,17 @@ func TestFinalizeRefund_EmptyProviderIDStoredAsNull(t *testing.T) {
 		t.Fatalf("BeginRefund B: %v", err)
 	}
 
-	// Пустой provider_refund_id у обоих — partial UNIQUE не должен конфликтовать на NULL.
+	// Empty provider_refund_id on both: partial UNIQUE must not conflict on NULL.
 	if err := s.FinalizeRefund(ctx, idA, "", RefundFailed, nil); err != nil {
-		t.Fatalf("FinalizeRefund A (пустой provider id): %v", err)
+		t.Fatalf("FinalizeRefund A (empty provider id): %v", err)
 	}
 	if err := s.FinalizeRefund(ctx, idB, "", RefundFailed, nil); err != nil {
-		t.Fatalf("FinalizeRefund B (пустой provider id): %v", err)
+		t.Fatalf("FinalizeRefund B (empty provider id): %v", err)
 	}
 	if pid := refundProviderID(t, s, idA); pid != nil {
-		t.Errorf("provider_refund_id A = %q, ожидали NULL", *pid)
+		t.Errorf("provider_refund_id A = %q, expected NULL", *pid)
 	}
 	if pid := refundProviderID(t, s, idB); pid != nil {
-		t.Errorf("provider_refund_id B = %q, ожидали NULL", *pid)
+		t.Errorf("provider_refund_id B = %q, expected NULL", *pid)
 	}
 }

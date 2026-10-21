@@ -1,40 +1,40 @@
-# ЮKassa payment links
+# YooKassa payment links
 
-Статус: актуальный рабочий контракт для слайса direct payment links, проверен по официальной документации ЮKassa 2026-06-30.
+Status: current working contract for the direct payment links slice, verified against the official YooKassa documentation on 2026-06-30.
 
-Эта статья описывает инструментарий, который используем вместо Telegram Payments provider token: прямой REST-платёж ЮKassa, redirect-ссылка пользователю, polling статуса, default-on recurring при runtime-флаге и REST-refund. Старый Telegram-контракт остаётся историческим фоном в [`API.md`](API.md).
+This article describes the toolkit we use instead of a Telegram Payments provider token: a direct YooKassa REST payment, a redirect link for the user, status polling, default-on recurring payments behind a runtime flag, and a REST refund. The old Telegram contract remains as historical background in [`API.md`](API.md).
 
-## Цель и границы
+## Goals and boundaries
 
-Делаем:
-- создаём платёж через `POST /v3/payments`;
-- отправляем пользователю `confirmation.confirmation_url` кнопкой в Telegram;
-- подтверждаем оплату polling-запросом `GET /v3/payments/{payment_id}`;
-- при `succeeded && paid=true` начисляем подписку;
-- при `RECURRING_PAYMENTS_ENABLED=true` первый платёж запрашивает сохранение payment method и включает recurring только если ЮKassa вернула `payment_method.saved=true`;
-- при `canceled` закрываем pending payment без подписки;
-- для возврата используем `POST /v3/refunds` по тому же `payment.id`.
+In scope:
+- create a payment via `POST /v3/payments`;
+- send `confirmation.confirmation_url` to the user as a Telegram button;
+- confirm the payment by polling `GET /v3/payments/{payment_id}`;
+- on `succeeded && paid=true`, grant the subscription;
+- with `RECURRING_PAYMENTS_ENABLED=true`, the first payment requests saving the payment method and enables recurring only if YooKassa returned `payment_method.saved=true`;
+- on `canceled`, close the pending payment without a subscription;
+- for refunds, use `POST /v3/refunds` with the same `payment.id`.
 
-Не делаем в первом слайсе:
-- webhook `payment.succeeded`;
-- двухстадийную оплату (`waiting_for_capture`);
-- оплату без фискального чека, пока включён режим "Чеки от ЮKassa".
+Out of scope for the first slice:
+- the `payment.succeeded` webhook;
+- two-stage payment (`waiting_for_capture`);
+- payment without a fiscal receipt while the "Receipts from YooKassa" mode is on.
 
-## Почему REST link + polling
+## Why REST link + polling
 
-REST link убирает зависимость приёма оплаты от BotFather binding и Telegram `successful_payment`. Наш ключ платежа сразу становится настоящим `payment.id` ЮKassa, поэтому refund больше не держится на допущении Telegram `provider_payment_charge_id == payment_id`.
+A REST link removes the dependency of payment acceptance on the BotFather binding and on Telegram `successful_payment`. Our payment key is immediately the real YooKassa `payment.id`, so refunds no longer rely on the Telegram assumption `provider_payment_charge_id == payment_id`.
 
-Polling выбран первым шагом, потому что не требует входящего HTTPS endpoint, настройки webhook в личном кабинете и nginx/deploy-работы. `return_url` используем только как UX-возврат: пользователь может оплатить и закрыть страницу, поэтому источником истины остаётся статус платежа в ЮKassa.
+Polling is the first step because it needs no incoming HTTPS endpoint, no webhook setup in the merchant dashboard, and no nginx/deploy work. We use `return_url` only as a UX return: the user may pay and close the page, so the payment status in YooKassa remains the source of truth.
 
-## API, auth и среды
+## API, auth and environments
 
 - Base URL: `https://api.yookassa.ru/v3`.
-- Формат: REST/JSON.
+- Format: REST/JSON.
 - Auth: HTTP Basic Auth, username = `shopId`, password = `secretKey`.
-- OAuth не нужен: он относится к партнёрским сценариям.
-- Test/live магазины имеют разные `shopId` и `secretKey`; в тестовых объектах ЮKassa возвращает `test=true`.
+- OAuth is not needed: it applies to partner scenarios.
+- Test and live shops have different `shopId` and `secretKey`; in test objects YooKassa returns `test=true`.
 
-## Создание платежа
+## Creating a payment
 
 ```http
 POST /v3/payments
@@ -43,7 +43,7 @@ Idempotence-Key: <uuid-or-other-unique-key>
 Content-Type: application/json
 ```
 
-Минимальная рабочая форма для нашего сервиса при включённом recurring-флаге. При `RECURRING_PAYMENTS_ENABLED=false` поля `save_payment_method` и `metadata.auto_renew` не отправляются:
+Minimal working form for our service with the recurring flag on. With `RECURRING_PAYMENTS_ENABLED=false`, the fields `save_payment_method` and `metadata.auto_renew` are not sent. The `description` values are Russian on purpose: they are shown to the payer and printed on the receipt ("15 часов на 1 месяц" means "15 hours for 1 month"):
 
 ```json
 {
@@ -71,30 +71,30 @@ Content-Type: application/json
 }
 ```
 
-Ожидаемый ответ содержит:
-- `id`: provider payment id, сохраняем в `payments.provider_payment_charge_id`;
-- `status`: обычно `pending` до действия пользователя;
+The expected response contains:
+- `id`: provider payment id, stored in `payments.provider_payment_charge_id`;
+- `status`: usually `pending` until the user acts;
 - `paid`: bool;
-- `confirmation.confirmation_url`: ссылку, которую отправляем пользователю;
-- `amount`, `metadata`, raw JSON для аудита;
-- `payment_method.id` и `payment_method.saved`, если запрашивали сохранение способа оплаты.
+- `confirmation.confirmation_url`: the link we send to the user;
+- `amount`, `metadata`, raw JSON for audit;
+- `payment_method.id` and `payment_method.saved`, if saving the payment method was requested.
 
 ## Idempotence-Key
 
-`Idempotence-Key` обязателен для `POST` и `DELETE`. Значение должно быть уникальным для одного намерения создать платёж или возврат, длиной до 64 символов. ЮKassa хранит результат идемпотентности 24 часа: повтор с тем же ключом и тем же телом возвращает результат исходного запроса.
+`Idempotence-Key` is required for `POST` and `DELETE`. The value must be unique per intent to create a payment or refund, up to 64 characters. YooKassa stores the idempotence result for 24 hours: a repeat with the same key and the same body returns the result of the original request.
 
-В коде ключ генерируется один раз при создании payment intent и сохраняется как `payments.payment_intent_key`. Для refund ключ сохраняется в `refunds.idempotence_key` до вызова `POST /v3/refunds`.
+In code the key is generated once when the payment intent is created and stored as `payments.payment_intent_key`. For a refund the key is stored in `refunds.idempotence_key` before calling `POST /v3/refunds`.
 
 ## Redirect flow
 
-1. Пользователь нажимает оплату в Telegram.
-2. Бот создаёт payment в ЮKassa.
-3. Бот сохраняет `payments.status='pending'`.
-4. Бот отправляет кнопку с `confirmation_url`.
-5. Пользователь платит на стороне ЮKassa.
-6. Бот узнаёт результат через polling, а не через `return_url`.
+1. The user taps pay in Telegram.
+2. The bot creates a payment in YooKassa.
+3. The bot stores `payments.status='pending'`.
+4. The bot sends a button with `confirmation_url`.
+5. The user pays on the YooKassa side.
+6. The bot learns the result through polling, not through `return_url`.
 
-## Polling статуса
+## Status polling
 
 ```http
 GET /v3/payments/{payment_id}
@@ -102,35 +102,35 @@ Authorization: Basic base64(shopId:secretKey)
 Accept: application/json
 ```
 
-Статусы платежа:
+Payment statuses:
 
-| Статус | Что делаем |
+| Status | Action |
 |---|---|
-| `pending` | Ничего, повторяем на следующем тике |
-| `waiting_for_capture` | Не используется при `capture=true`; оставляем pending и логируем как неготовый статус |
-| `succeeded` + `paid=true` | Идемпотентно переводим payment в `succeeded`, создаём subscription, при `auto_renew + saved` активируем recurring, уведомляем пользователя |
-| `canceled` | Переводим наш pending payment в `failed`, подписку не создаём; для recurring temporary cancel даёт retry, revoked/mandate блокирует профиль |
+| `pending` | Nothing, retry on the next tick |
+| `waiting_for_capture` | Not used with `capture=true`; keep pending and log as a not-ready status |
+| `succeeded` + `paid=true` | Idempotently move the payment to `succeeded`, create a subscription, activate recurring on `auto_renew + saved`, notify the user |
+| `canceled` | Move our pending payment to `failed`, create no subscription; for recurring, a temporary cancel gives a retry, revoked/mandate blocks the profile |
 
-Финализация защищена нашей БД: `pending -> succeeded` под `FOR UPDATE`, guard по статусу и `subscription_id IS NULL`; для direct/recurring intent обязательно сверяем `metadata.user_id`. Повторный polling не создаёт вторую подписку.
+Finalization is protected by our DB: `pending -> succeeded` under `FOR UPDATE`, with a guard on status and `subscription_id IS NULL`; for a direct/recurring intent we must also check `metadata.user_id`. Repeated polling does not create a second subscription.
 
-## Чеки 54-ФЗ и email
+## 54-FZ receipts and email
 
-Важное уточнение: ЮKassa API технически позволяет создать payment без `receipt` и без email. Но если для магазина включены "Чеки от ЮKassa" и чек формирует ЮKassa, данные чека надо передавать в `receipt` при создании платежа.
+Important clarification: the YooKassa API technically allows creating a payment without `receipt` and without an email. But if the shop has "Receipts from YooKassa" enabled and YooKassa issues the receipt, the receipt data must be passed in `receipt` when the payment is created.
 
-Для нашего выбранного режима:
-- `receipt.items` обязателен;
-- `items[].description`, `quantity`, `amount`, `vat_code` обязательны;
-- `payment_subject=service`, `payment_mode=full_payment`, `measure=piece` передаём явно;
-- для "Чеков от ЮKassa" нужен `receipt.customer.email`.
-- `tax_system_code` не отправляем, если у магазина одна СНО и ЮKassa не требует поле; если у ИП несколько СНО, задаём его явно через env и проверяем на test receipt.
+For our chosen mode:
+- `receipt.items` is required;
+- `items[].description`, `quantity`, `amount`, `vat_code` are required;
+- `payment_subject=service`, `payment_mode=full_payment`, `measure=piece` are passed explicitly;
+- "Receipts from YooKassa" needs `receipt.customer.email`;
+- we do not send `tax_system_code` if the shop has a single tax system and YooKassa does not require the field; if a sole proprietor has several tax systems, set it explicitly via env and check it on a test receipt.
 
-Поэтому бот собирает и сохраняет `users.payment_email` перед первой оплатой. Это не ограничение самого платежа, а наше фискальное решение для текущего магазина.
+That is why the bot collects and stores `users.payment_email` before the first payment. This is not a limitation of the payment itself, but our fiscal decision for the current shop.
 
 ## Recurring payment method
 
-Default-on recurring работает только в direct REST flow. При включённом `RECURRING_PAYMENTS_ENABLED` первый payment отправляет `save_payment_method:"true"` и `metadata.auto_renew=true`. `payment_method.id` сохраняем только если локальная metadata содержит `auto_renew=true`, ЮKassa вернула `payment_method.saved=true`, а id непустой.
+Default-on recurring works only in the direct REST flow. With `RECURRING_PAYMENTS_ENABLED` on, the first payment sends `save_payment_method:"true"` and `metadata.auto_renew=true`. We store `payment_method.id` only if the local metadata contains `auto_renew=true`, YooKassa returned `payment_method.saved=true`, and the id is non-empty.
 
-Повторные списания создаются отдельным `POST /v3/payments` с `payment_method_id`, тем же receipt и deterministic `Idempotence-Key=recurring:<user_id>:<next_charge_at_unix>`. До внешнего POST БД переводит профиль в `charging`; stale intent без provider id старше 23 часов блокирует профиль, чтобы не повторять списание после TTL идемпотентности ЮKassa.
+Recurring charges are created as a separate `POST /v3/payments` with `payment_method_id`, the same receipt and a deterministic `Idempotence-Key=recurring:<user_id>:<next_charge_at_unix>`. Before the external POST the DB moves the profile to `charging`; a stale intent without a provider id older than 23 hours blocks the profile, so the charge is not repeated after the YooKassa idempotence TTL.
 
 ## Refunds
 
@@ -141,7 +141,7 @@ Idempotence-Key: <refund-intent-key>
 Content-Type: application/json
 ```
 
-Тело полного возврата:
+Full refund body:
 
 ```json
 {
@@ -150,38 +150,38 @@ Content-Type: application/json
 }
 ```
 
-В MVP делаем только полный refund. `payment_id` берём из `payments.provider_payment_charge_id`, потому что при direct payment link это настоящий `payment.id` ЮKassa.
+The MVP supports only a full refund. We take `payment_id` from `payments.provider_payment_charge_id`, because for a direct payment link it is the real YooKassa `payment.id`.
 
 ## Webhooks vs polling
 
-ЮKassa поддерживает события `payment.succeeded`, `payment.canceled`, `refund.succeeded`. Для Basic Auth уведомления настраиваются в личном кабинете. API `/v3/webhooks` относится к OAuth/партнёрскому сценарию, не к нашему обычному магазину.
+YooKassa supports the events `payment.succeeded`, `payment.canceled`, `refund.succeeded`. With Basic Auth, notifications are configured in the merchant dashboard. The `/v3/webhooks` API belongs to the OAuth/partner scenario, not to our regular shop.
 
-Webhook можно добавить позже, если задержка polling окажется плохой для UX. В первом слайсе polling проще: не нужен публичный endpoint и новая инфраструктура.
+A webhook can be added later if polling delay turns out to be bad for UX. In the first slice polling is simpler: no public endpoint and no new infrastructure.
 
-## Test mode и smoke
+## Test mode and smoke
 
-Минимальный smoke:
-1. test `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY`, `PAYMENT_RETURN_URL` и receipt vars в env;
-2. нажать оплату в `@transcrib_dev_bot`;
-3. ввести email и проверить `users.payment_email`;
-4. открыть `confirmation_url`;
-5. оплатить тестовой картой;
-6. дождаться polling-сообщения об активации и, при включённом recurring, даты следующего списания;
-7. проверить `/balance`: статус автопродления, «Отключить автопродление», «Обновить подписку»;
-8. проверить БД: `pending -> succeeded`, `provider_payment_charge_id=payment.id`, `payment_intent_key` заполнен, `subscription_id IS NOT NULL`;
-9. повторный polling не создаёт вторую subscription;
-10. сделать full refund по `provider_payment_charge_id`;
-11. отдельным негативным прогоном проверить, что `canceled` unpaid payment становится `failed` без подписки; для recurring temporary cancel даёт `charge_failed`, stale unknown-result старше 23 часов даёт `blocked`.
+Minimal smoke test:
+1. put the test `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY`, `PAYMENT_RETURN_URL` and the receipt vars in env;
+2. tap pay in `@transcrib_dev_bot`;
+3. enter an email and check `users.payment_email`;
+4. open `confirmation_url`;
+5. pay with a test card;
+6. wait for the polling message about activation and, with recurring on, the next charge date;
+7. check `/balance`: auto-renewal status and the buttons «Отключить автопродление» ("Disable auto-renewal") and «Обновить подписку» ("Renew subscription");
+8. check the DB: `pending -> succeeded`, `provider_payment_charge_id=payment.id`, `payment_intent_key` filled, `subscription_id IS NOT NULL`;
+9. repeated polling does not create a second subscription;
+10. make a full refund by `provider_payment_charge_id`;
+11. in a separate negative run check that a `canceled` unpaid payment becomes `failed` without a subscription; for recurring, a temporary cancel gives `charge_failed`, and a stale unknown result older than 23 hours gives `blocked`.
 
-## Опасные допущения
+## Dangerous assumptions
 
-- Не считать `return_url` подтверждением оплаты.
-- Не ждать Telegram `successful_payment` в новом потоке.
-- Не использовать `/v3/webhooks` для Basic Auth магазина.
-- Не генерировать новый `Idempotence-Key` при retry той же операции.
-- Не путать рубли строкой в ЮKassa (`"1990.00"`) и копейки целым в старом Telegram invoice (`199000`).
+- Do not treat `return_url` as payment confirmation.
+- Do not wait for Telegram `successful_payment` in the new flow.
+- Do not use `/v3/webhooks` for a Basic Auth shop.
+- Do not generate a new `Idempotence-Key` when retrying the same operation.
+- Do not confuse rubles as a string in YooKassa (`"1990.00"`) with kopecks as an integer in the old Telegram invoice (`199000`).
 
-## Официальные источники
+## Official sources
 
 - Interaction format: https://yookassa.ru/developers/using-api/interaction-format
 - Quick start payments: https://yookassa.ru/developers/payment-acceptance/getting-started/quick-start

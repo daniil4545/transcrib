@@ -8,23 +8,23 @@ import (
 	"time"
 )
 
-// TestMapMymeetStatus фиксирует контракт маппинга статусов mymeet (API.md §1.2,
-// план-слайс «Критические узлы под тест») от дрейфа. Неизвестный статус обязан
-// давать ошибку, а не молчаливый Pending — иначе джоба вечно залипнет без следа.
+// TestMapMymeetStatus pins the mymeet status mapping contract (API.md §1.2,
+// plan slice "Critical nodes under test") against drift. An unknown status must
+// produce an error, not a silent Pending, otherwise the job hangs forever without a trace.
 func TestMapMymeetStatus(t *testing.T) {
-	// Успешные ветки: известный статус -> конкретный ProviderStatus (LIVE-маппинг
-	// API.md §1.2). Фазы развёрнуты: JoiningCall (connecting/queued, бот подключается),
-	// OnCall (recording, бот пишет), Transcribing (processing, бот вышел), Done
+	// Success branches: known status -> specific ProviderStatus (LIVE mapping
+	// API.md §1.2). The phases are expanded: JoiningCall (connecting/queued, the bot is connecting),
+	// OnCall (recording, the bot is recording), Transcribing (processing, the bot has left), Done
 	// (new/processed), Failed.
 	ok := []struct {
 		value string
 		want  ProviderStatus
 	}{
-		{"new", StatusDone},                // LIVE: new = ГОТОВО к Fetch, не «в очереди»
-		{"recording", StatusOnCall},        // LIVE: бот пишет звонок -> Job recording
-		{"connecting", StatusJoiningCall},  // LIVE 2026-06-17: бот подключается (фаза до recording)
-		{"queued", StatusJoiningCall},      // бот подключается / в очереди
-		{"processing", StatusTranscribing}, // бот вышел, фоновая обработка -> Job processing
+		{"new", StatusDone},                // LIVE: new = READY for Fetch, not "queued"
+		{"recording", StatusOnCall},        // LIVE: the bot records the call -> Job recording
+		{"connecting", StatusJoiningCall},  // LIVE 2026-06-17: the bot is connecting (phase before recording)
+		{"queued", StatusJoiningCall},      // the bot is connecting / queued
+		{"processing", StatusTranscribing}, // the bot has left, background processing -> Job processing
 		{"processed", StatusDone},
 		{"failed", StatusFailed},
 	}
@@ -32,44 +32,44 @@ func TestMapMymeetStatus(t *testing.T) {
 		t.Run("ok/"+tt.value, func(t *testing.T) {
 			got, err := mapMymeetStatus(tt.value)
 			if err != nil {
-				t.Fatalf("mapMymeetStatus(%q): неожиданная ошибка %v", tt.value, err)
+				t.Fatalf("mapMymeetStatus(%q): unexpected error %v", tt.value, err)
 			}
 			if got != tt.want {
-				t.Errorf("mapMymeetStatus(%q) = %d, ожидали %d", tt.value, got, tt.want)
+				t.Errorf("mapMymeetStatus(%q) = %d, want %d", tt.value, got, tt.want)
 			}
 		})
 	}
 
-	// Негативные ветки (дрейф контракта): фиксируем факт ошибки. StatusPaused у mymeet
-	// недостижим (нехватка минут — это HTTP 402 на Submit, не Poll-статус), потому
-	// "paused" — такой же неизвестный статус, как любой другой.
+	// Negative branches (contract drift): assert only that an error occurs. StatusPaused is
+	// unreachable for mymeet (lack of minutes is HTTP 402 on Submit, not a Poll status), so
+	// "paused" is an unknown status like any other.
 	bad := []string{
-		"paused", // у mymeet не приходит на Poll -> должен быть unknown, не StatusPaused
+		"paused", // mymeet never returns it on Poll -> must be unknown, not StatusPaused
 		"shiny-new-status",
-		"done",       // s2t-словарь, не mymeet -> не должен молча маппиться
-		"PROCESSING", // регистр снимает Poll (ToLower), сюда приходит уже lower; верхний = unknown
+		"done",       // s2t vocabulary, not mymeet -> must not map silently
+		"PROCESSING", // Poll lowercases the status (ToLower), so only lower case arrives here; upper case = unknown
 		"",
 	}
 	for _, value := range bad {
 		t.Run("unknown/"+value, func(t *testing.T) {
 			got, err := mapMymeetStatus(value)
 			if err == nil {
-				t.Errorf("mapMymeetStatus(%q): ожидали ошибку дрейфа контракта, получили nil", value)
+				t.Errorf("mapMymeetStatus(%q): want a contract drift error, got nil", value)
 			}
-			// Негативный кейс проверяет устойчивость: при ошибке статус НЕ должен
-			// быть Done/Failed (это привело бы к ложной доставке/откату). Pending
-			// при err — безопасная деталь (оркестратор смотрит на err первым).
+			// The negative case checks robustness: on error the status must NOT
+			// be Done/Failed (that would cause a false delivery/rollback). Pending
+			// with err is a safe detail (the orchestrator looks at err first).
 			if got == StatusDone || got == StatusFailed {
-				t.Errorf("mapMymeetStatus(%q) при ошибке вернул терминальный %d — риск ложной доставки/отката", value, got)
+				t.Errorf("mapMymeetStatus(%q) returned terminal %d on error: risk of false delivery/rollback", value, got)
 			}
 		})
 	}
 }
 
-// TestMymeetSource фиксирует маппинг host -> source (значения openapi.json, API.md
-// §1.1). Граничные значения: точные хосты, поддомены zoom, Телемост -> yandextelemost
-// (LIVE: НЕ telemost — с ним бот не заходит). Неизвестный хост -> ошибка: бота в
-// никуда не шлём (жжёт минуты mymeet).
+// TestMymeetSource pins the host -> source mapping (openapi.json values, API.md
+// §1.1). Boundary values: exact hosts, zoom subdomains, Telemost -> yandextelemost
+// (LIVE: NOT telemost, the bot cannot join with it). Unknown host -> error: we do not
+// send the bot nowhere (it burns mymeet minutes).
 func TestMymeetSource(t *testing.T) {
 	ok := []struct {
 		name string
@@ -87,15 +87,15 @@ func TestMymeetSource(t *testing.T) {
 		t.Run("ok/"+tt.name, func(t *testing.T) {
 			got, err := mymeetSource(tt.url)
 			if err != nil {
-				t.Fatalf("mymeetSource(%q): неожиданная ошибка %v", tt.url, err)
+				t.Fatalf("mymeetSource(%q): unexpected error %v", tt.url, err)
 			}
 			if got != tt.want {
-				t.Errorf("mymeetSource(%q) = %q, ожидали %q", tt.url, got, tt.want)
+				t.Errorf("mymeetSource(%q) = %q, want %q", tt.url, got, tt.want)
 			}
 		})
 	}
 
-	// Негативные: неизвестный/пустой хост -> ошибка (не пустой source, не fallback gmeet).
+	// Negative: unknown/empty host -> error (not an empty source, not a gmeet fallback).
 	bad := []struct {
 		name string
 		url  string
@@ -103,32 +103,32 @@ func TestMymeetSource(t *testing.T) {
 		{"unknown_host", "https://teams.microsoft.com/l/meetup-join/xyz"},
 		{"webex", "https://example.webex.com/meet/room"},
 		{"empty_host", "/just/a/path"},
-		{"bare_word_no_host", "meet.google.com/abc"}, // без схемы -> Hostname() пустой
+		{"bare_word_no_host", "meet.google.com/abc"}, // no scheme -> Hostname() is empty
 	}
 	for _, tt := range bad {
 		t.Run("err/"+tt.name, func(t *testing.T) {
 			got, err := mymeetSource(tt.url)
 			if err == nil {
-				t.Errorf("mymeetSource(%q): ожидали ошибку, получили source=%q", tt.url, got)
+				t.Errorf("mymeetSource(%q): want an error, got source=%q", tt.url, got)
 			}
 		})
 	}
 }
 
-// TestMymeetPoll_Normalize проверяет НАШУ логику нормализации ответа Poll
-// (TrimSpace + снятие обрамляющих кавычек + lower-case). LIVE: статус приходит
-// plain-text голой строкой; нормализация страхует и форму в кавычках — обе обязаны
-// дать один ProviderStatus.
+// TestMymeetPoll_Normalize checks OUR normalization of the Poll response
+// (TrimSpace + stripping surrounding quotes + lower-case). LIVE: the status arrives as
+// a bare plain-text string; normalization also covers the quoted form, and both must
+// yield the same ProviderStatus.
 func TestMymeetPoll_Normalize(t *testing.T) {
 	tests := []struct {
 		name string
-		body string // что отдаёт тестовый backend в теле /api/meeting/status
+		body string // what the test backend returns in the /api/meeting/status body
 		want ProviderStatus
 	}{
 		{"plain_processing", "processing", StatusTranscribing},
 		{"json_quoted_processing", `"processing"`, StatusTranscribing},
 		{"json_quoted_with_whitespace", "  \"processing\"\n", StatusTranscribing},
-		{"plain_uppercase", "PROCESSING", StatusTranscribing}, // lower-case — наша нормализация
+		{"plain_uppercase", "PROCESSING", StatusTranscribing}, // lower-case is our normalization
 		{"json_quoted_processed", `"processed"`, StatusDone},
 		{"plain_failed_trailing_newline", "failed\n", StatusFailed},
 	}
@@ -144,19 +144,19 @@ func TestMymeetPoll_Normalize(t *testing.T) {
 			p := NewMymeet("test-key", srv.URL, "default-meeting", time.UTC)
 			got, err := p.Poll(context.Background(), "some-meeting-id")
 			if err != nil {
-				t.Fatalf("Poll(body=%q): неожиданная ошибка %v", tt.body, err)
+				t.Fatalf("Poll(body=%q): unexpected error %v", tt.body, err)
 			}
 			if got != tt.want {
-				t.Errorf("Poll(body=%q) = %d, ожидали %d", tt.body, got, tt.want)
+				t.Errorf("Poll(body=%q) = %d, want %d", tt.body, got, tt.want)
 			}
 		})
 	}
 }
 
-// TestMymeetPoll_NotFound: HTTP 404 на /status — встреча ещё не появилась (бот ещё
-// не зашёл, API.md §1.2). Должно мапиться в StatusJoiningCall БЕЗ ошибки (транзиент, не
-// сбой), иначе на штатном лаге захода бота сыпется ложный ERROR. Если бот так и не
-// зайдёт — джобу добьёт orphan-timeout по maxJobAge (orchestrator), не Poll.
+// TestMymeetPoll_NotFound: HTTP 404 on /status means the meeting has not appeared yet (the bot has
+// not joined, API.md §1.2). It must map to StatusJoiningCall WITHOUT an error (transient, not a
+// failure), otherwise the normal bot join lag produces a false ERROR. If the bot never
+// joins, the job is finished by the orphan timeout on maxJobAge (orchestrator), not by Poll.
 func TestMymeetPoll_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -169,16 +169,16 @@ func TestMymeetPoll_NotFound(t *testing.T) {
 	p := NewMymeet("test-key", srv.URL, "default-meeting", time.UTC)
 	got, err := p.Poll(context.Background(), "not-yet-visible-id")
 	if err != nil {
-		t.Fatalf("Poll(404): ожидали nil-ошибку (транзиент «ещё не появилась»), получили %v", err)
+		t.Fatalf("Poll(404): want a nil error (transient: not yet appeared), got %v", err)
 	}
 	if got != StatusJoiningCall {
-		t.Errorf("Poll(404) = %d, ожидали StatusJoiningCall", got)
+		t.Errorf("Poll(404) = %d, want StatusJoiningCall", got)
 	}
 }
 
-// TestMymeetSummaryMarkdown — table-driven тесты парсера templates (без БД и сети).
-// Покрывает: свежую форму, старую форму, пустые actions, нет templates, невалидный JSON,
-// непарсимый is_json=true. Имена секций не фиксированы — парсер имя-агностичен.
+// TestMymeetSummaryMarkdown: table-driven tests of the templates parser (no DB, no network).
+// Covers: the fresh form, the old form, empty actions, no templates, invalid JSON,
+// unparsable is_json=true. Section names are not fixed: the parser is name-agnostic.
 func TestMymeetSummaryMarkdown(t *testing.T) {
 	tests := []struct {
 		name string
@@ -186,8 +186,8 @@ func TestMymeetSummaryMarkdown(t *testing.T) {
 		want string
 	}{
 		{
-			// Свежая форма (живая проба 2026-06-18): два шаблона, текстовые секции
-			// в default-meeting + отдельный шаблон tasks с actions.
+			// Fresh form (live probe 2026-06-18): two templates, text sections
+			// in default-meeting + a separate tasks template with actions.
 			name: "fresh_form_two_templates",
 			raw: `{"followup_v2":{"chapters":[],"templates":[
 				{"entities":[
@@ -204,7 +204,7 @@ func TestMymeetSummaryMarkdown(t *testing.T) {
 			want: "# Саммари встречи\n\n## Обзор встречи\n\nОбсудили план.\n\n## Ключевые темы\n\n- Тема A\n- Тема B\n\n## Задачи\n- [ ] Сделать отчёт\n- [x] Отправить письмо",
 		},
 		{
-			// Старая форма: один шаблон, все секции (текст + задачи) внутри него.
+			// Old form: one template, all sections (text + tasks) inside it.
 			name: "old_form_single_template",
 			raw: `{"followup_v2":{"chapters":[],"templates":[
 				{"entities":[
@@ -218,7 +218,7 @@ func TestMymeetSummaryMarkdown(t *testing.T) {
 			want: "# Саммари встречи\n\n## Повестка\n\nПункт 1.\n\n## Итоги\n\nДоговорились.\n\n## Задачи\n- [ ] Написать протокол",
 		},
 		{
-			// Задачи с пустым actions — секция «Задачи» не появляется.
+			// Tasks with empty actions: the "Задачи" (tasks) section does not appear.
 			name: "empty_actions_no_tasks_section",
 			raw: `{"followup_v2":{"chapters":[],"templates":[
 				{"entities":[
@@ -229,26 +229,26 @@ func TestMymeetSummaryMarkdown(t *testing.T) {
 			want: "# Саммари встречи\n\nКраткое содержание.",
 		},
 		{
-			// Нет поля templates -> пустая строка.
+			// No templates field -> empty string.
 			name: "no_templates",
 			raw:  `{"followup_v2":{"chapters":[]}}`,
 			want: "",
 		},
 		{
-			// followup_v2 == null -> пустая строка.
+			// followup_v2 == null -> empty string.
 			name: "followup_null",
 			raw:  `{"followup_v2":null}`,
 			want: "",
 		},
 		{
-			// Невалидный JSON -> пустая строка.
+			// Invalid JSON -> empty string.
 			name: "invalid_json",
 			raw:  `{not valid json`,
 			want: "",
 		},
 		{
-			// tasks с непарсимым text (строка вместо объекта при is_json=true) ->
-			// секция задач пропущена, не паника; текстовые блоки остаются.
+			// tasks with an unparsable text (a string instead of an object when is_json=true) ->
+			// the tasks section is skipped, no panic; text blocks remain.
 			name: "tasks_unparseable_text",
 			raw: `{"followup_v2":{"chapters":[],"templates":[
 				{"entities":[
@@ -259,8 +259,8 @@ func TestMymeetSummaryMarkdown(t *testing.T) {
 			want: "# Саммари встречи\n\nИтоги встречи.",
 		},
 		{
-			// Только задачи, без текстовых блоков -> заголовок «Задачи» без лишнего
-			// пустого блока между ним и «# Саммари встречи» (ветка len(summaryBlocks)==0).
+			// Tasks only, no text blocks -> the "Задачи" (tasks) heading without an extra
+			// empty block between it and "# Саммари встречи" (meeting summary) (branch len(summaryBlocks)==0).
 			name: "tasks_only_no_summary",
 			raw: `{"followup_v2":{"chapters":[],"templates":[
 				{"entities":[
@@ -272,8 +272,8 @@ func TestMymeetSummaryMarkdown(t *testing.T) {
 			want: "# Саммари встречи\n\n## Задачи\n- [ ] Единственная задача",
 		},
 		{
-			// is_json=false, но text — объект, не строка (граница «text разнотипна по
-			// is_json»): Unmarshal в string падает -> секция пропущена, валидная остаётся.
+			// is_json=false, but text is an object, not a string (the "text type varies with
+			// is_json" boundary): Unmarshal into string fails -> the section is skipped, the valid one remains.
 			name: "non_string_text_skipped",
 			raw: `{"followup_v2":{"chapters":[],"templates":[
 				{"entities":[
@@ -288,24 +288,24 @@ func TestMymeetSummaryMarkdown(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := mymeetSummaryMarkdown([]byte(tt.raw))
 			if got != tt.want {
-				t.Errorf("mymeetSummaryMarkdown =\n%q\nожидали\n%q", got, tt.want)
+				t.Errorf("mymeetSummaryMarkdown =\n%q\nwant\n%q", got, tt.want)
 			}
 		})
 	}
 }
 
-// TestMymeetFetch_Render проверяет рендер транскрипта по спикерам из реального формата
-// report (followup_v2.chapters[].transcript[], API.md §1.3, LIVE) — ТОЧНУЮ строку, не
-// «содержит». Плюс два guard'а: нет followup_v2 -> «не удалось разобрать»; речи нет ->
-// «речь не обнаружена». Защищает инвариант «продукт = транскрипт по спикерам» от
-// регресса (старый код отдавал заглушку-техдолг вместо транскрипта).
+// TestMymeetFetch_Render checks the per-speaker transcript render from the real report
+// format (followup_v2.chapters[].transcript[], API.md §1.3, LIVE): the EXACT string, not
+// "contains". Plus two guards: no followup_v2 -> "could not parse"; no speech ->
+// "no speech detected". It protects the invariant "product = per-speaker transcript" from
+// regression (the old code returned a tech-debt stub instead of a transcript).
 func TestMymeetFetch_Render(t *testing.T) {
 	tests := []struct {
 		name         string
 		body         string
 		want         string
 		wantDuration int
-		rawEmpty     bool // невалидный JSON -> Raw nil (NULL в JSONB)
+		rawEmpty     bool // invalid JSON -> Raw nil (NULL in JSONB)
 	}{
 		{
 			name: "two_speakers_one_chapter",
@@ -339,8 +339,8 @@ func TestMymeetFetch_Render(t *testing.T) {
 			want: "_Не удалось разобрать ответ поставщика. Обратитесь в поддержку._",
 		},
 		{
-			// Пустая глава (все сегменты пусты) отбрасывается вместе с заголовком —
-			// в выводе только содержательная глава, без ведущего "\n\n".
+			// An empty chapter (all segments empty) is dropped together with its heading:
+			// the output has only the substantive chapter, without a leading "\n\n".
 			name: "empty_chapter_among_nonempty",
 			body: `{"followup_v2":{"chapters":[
 				{"name":"Пустая","transcript":[{"speaker":{"speaker":"Анна"},"text":"  ","timestamp":"0:00:00"}]},
@@ -358,8 +358,8 @@ func TestMymeetFetch_Render(t *testing.T) {
 			wantDuration: 73,
 		},
 		{
-			// Невалидный JSON -> guard 1 (json.Unmarshal падает) -> «не удалось разобрать»;
-			// Raw nil (json.Valid=false -> NULL в JSONB).
+			// Invalid JSON -> guard 1 (json.Unmarshal fails) -> "could not parse";
+			// Raw nil (json.Valid=false -> NULL in JSONB).
 			name:     "invalid_json",
 			body:     `{not valid json`,
 			want:     "_Не удалось разобрать ответ поставщика. Обратитесь в поддержку._",
@@ -378,21 +378,21 @@ func TestMymeetFetch_Render(t *testing.T) {
 			p := NewMymeet("test-key", srv.URL, "default-meeting", time.UTC)
 			res, err := p.Fetch(context.Background(), "meeting-id")
 			if err != nil {
-				t.Fatalf("Fetch: неожиданная ошибка %v", err)
+				t.Fatalf("Fetch: unexpected error %v", err)
 			}
 			if res.TranscriptMarkdown != tt.want {
-				t.Errorf("TranscriptMarkdown =\n%q\nожидали\n%q", res.TranscriptMarkdown, tt.want)
+				t.Errorf("TranscriptMarkdown =\n%q\nwant\n%q", res.TranscriptMarkdown, tt.want)
 			}
 			if res.DurationSeconds != tt.wantDuration {
-				t.Errorf("DurationSeconds = %d, ожидали %d", res.DurationSeconds, tt.wantDuration)
+				t.Errorf("DurationSeconds = %d, want %d", res.DurationSeconds, tt.wantDuration)
 			}
-			// Raw несёт сырой ответ для F5/Google Doc; невалидный JSON -> nil (NULL в JSONB).
+			// Raw carries the raw response for F5/Google Doc; invalid JSON -> nil (NULL in JSONB).
 			if tt.rawEmpty {
 				if len(res.Raw) != 0 {
-					t.Errorf("Raw: ожидали пусто (невалидный JSON -> NULL), got len %d", len(res.Raw))
+					t.Errorf("Raw: want empty (invalid JSON -> NULL), got len %d", len(res.Raw))
 				}
 			} else if len(res.Raw) == 0 {
-				t.Errorf("Raw пуст — ожидали сырой ответ report")
+				t.Errorf("Raw is empty: want the raw report response")
 			}
 		})
 	}

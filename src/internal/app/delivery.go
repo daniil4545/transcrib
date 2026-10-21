@@ -27,8 +27,8 @@ func formatCallShortTime(t time.Time) string {
 	return moscowTime(t).Format("02.01 15:04")
 }
 
-// transcriptFilename — имя файла транскрипта по времени звонка (понятнее и сортируется
-// лучше, чем по внутреннему id). Без двоеточий — безопасно для файловых систем.
+// transcriptFilename is the transcript file name based on the call time (clearer and sorts
+// better than the internal id). No colons, so it is safe for file systems.
 func transcriptFilename(createdAt time.Time) string {
 	return "transcript_" + moscowTime(createdAt).Format("20060102_1504") + ".md"
 }
@@ -49,16 +49,16 @@ type DeliveryDocument struct {
 	Content  []byte
 }
 
-// DocumentDelivery отправляет готовый документ пользователю.
-// Обоснование интерфейса: вторая реализация (google_delivery.go) уже в
-// дорожной карте Этапа 5 (architecture.md §11 п.11) — не преждевременная
-// абстракция.
+// DocumentDelivery sends a finished document to the user.
+// Rationale for the interface: a second implementation (google_delivery.go) is already on
+// the Stage 5 roadmap (architecture.md §11 item 11), so this is not a premature
+// abstraction.
 type DocumentDelivery interface {
-	// Deliver отправляет контент как файл с именем filename в чат chatID
-	// (chatID = users.telegram_id). caption — подпись файла для каналов, где она
-	// применима (Telegram); реализации, которым caption не нужен, игнорируют.
+	// Deliver sends content as a file named filename to chat chatID
+	// (chatID = users.telegram_id). caption is the file caption for channels where it is
+	// applicable (Telegram); implementations that do not need a caption ignore it.
 	Deliver(ctx context.Context, chatID int64, filename, caption string, content []byte) error
-	// DeliverGroup отправляет несколько файлов одной пользовательской группой.
-	// В Telegram это sendMediaGroup: отдельные документы с общим media_group_id.
+	// DeliverGroup sends several files as one user-visible group.
+	// In Telegram this is sendMediaGroup: separate documents sharing a media_group_id.
 	DeliverGroup(ctx context.Context, chatID int64, caption string, docs []DeliveryDocument) error
 }

@@ -1,52 +1,52 @@
-# OpenRouter — целевой провайдер саммари F3 (Summarizer)
+# OpenRouter: target summary provider F3 (Summarizer)
 
-Досье по OpenRouter как реализации интерфейса `Summarizer` (`internal/app/summary.go`). Контракт API — [`API.md`](API.md). Поставщики транскрибации — `docs/api/speech2text/README.md` (текущий prod/dev provider) и `docs/api/mymeet/README.md` (рабочий fallback).
+Dossier on OpenRouter as an implementation of the `Summarizer` interface (`internal/app/summary.go`). API contract: [`API.md`](API.md). Transcription providers: `docs/api/speech2text/README.md` (current prod/dev provider) and `docs/api/mymeet/README.md` (working fallback).
 
-Исследование 2026-06-22 (рой агентов + состязательная верификация; контракт-критичные и числовые факты подтверждены живым `curl` к API, помечены «(LIVE)»).
+Research dated 2026-06-22 (a swarm of agents + adversarial verification; contract-critical and numeric facts were confirmed by a live `curl` to the API and are marked "(LIVE)").
 
-## Статус: ЦЕЛЕВАЯ реализация `Summarizer`, заменяет нереализованный `claude.go`
+## Status: TARGET `Summarizer` implementation, replaces the unimplemented `claude.go`
 
-Основной провайдер транскрибации (s2t) саммари через API не отдаёт — конспект F3 формируем сами. По решению владельца (2026-06-22) реализацию `Summarizer` ведём отдельным файлом `openrouter.go` через OpenRouter, а не привязанным к одному вендору `claude.go`. Дефолтная модель — **`google/gemini-2.5-flash`** (env-настраиваемая, свап строкой). Поддержка `OPENROUTER_PROXY_URL` есть в Git `main` начиная с `0.0.3.5`; live prod `0.0.3.4` до следующего deploy использует временный global proxy hotfix.
+The main transcription provider (s2t) does not return a summary through the API, so we build the F3 digest ourselves. By the owner's decision (2026-06-22) the `Summarizer` implementation lives in a separate file `openrouter.go` through OpenRouter, rather than a single-vendor `claude.go`. The default model is **`google/gemini-2.5-flash`** (configurable via env, swapped by one line). `OPENROUTER_PROXY_URL` support is in Git `main` starting from `0.0.3.5`; live prod `0.0.3.4` uses a temporary global proxy hotfix until the next deploy.
 
-## Что это
+## What it is
 
-OpenRouter — агрегатор LLM: единый **OpenAI-совместимый** шлюз (`/api/v1/chat/completions`) к сотням моделей десятков вендоров через один ключ и одну предоплаченную (prepaid credits) учётку. Для нас это: одна HTTP-интеграция вместо клиента под каждого вендора, и смена модели саммари строкой `OPENROUTER_MODEL` без правки кода. Минус для нашего use case — данные идут через серверы в США (трансграничная передача ПДн, см. ниже).
+OpenRouter is an LLM aggregator: a single **OpenAI-compatible** gateway (`/api/v1/chat/completions`) to hundreds of models from dozens of vendors through one key and one prepaid-credits account. For us this means one HTTP integration instead of a client per vendor, and changing the summary model with the `OPENROUTER_MODEL` string without code changes. The downside for our use case: data goes through servers in the USA (cross-border transfer of personal data, see below).
 
-## Модель и экономика
+## Model and economics
 
-Сравнение кандидатов (числа — **LIVE** `GET /api/v1/models`, 2026-06-22):
+Candidate comparison (numbers are **LIVE** `GET /api/v1/models`, 2026-06-22):
 
-| Модель | Slug | Контекст | Max output | $in / 1M | $out / 1M | Примечание |
+| Model | Slug | Context | Max output | $in / 1M | $out / 1M | Note |
 |---|---|---|---|---|---|---|
-| **Gemini 2.5 Flash** | `google/gemini-2.5-flash` | 1 048 576 | 65 535 | $0.30 | $2.50 | **Дефолт.** 1M-контекст покрывает любую встречу целиком; сильный русский. Встроенный thinking включён по умолчанию и тарифицируется как output ($2.50/1M) — можно ограничить/выключить (`API.md` §3). |
-| GPT-4o mini | `openai/gpt-4o-mini` | 128 000 | 16 384 | $0.15 | $0.60 | Дешевле; контекст 128K хватает на встречу до ~1.5–2 ч. |
-| DeepSeek V3 | `deepseek/deepseek-chat` | 131 072 | 16 000 | $0.20 | $0.80 | Самый бюджетный; русский приемлемый, меньше верифицированных RU-бенчмарков. |
+| **Gemini 2.5 Flash** | `google/gemini-2.5-flash` | 1,048,576 | 65,535 | $0.30 | $2.50 | **Default.** The 1M context covers any meeting in full; strong Russian. Built-in thinking is on by default and billed as output ($2.50/1M); it can be limited/disabled (`API.md` §3). |
+| GPT-4o mini | `openai/gpt-4o-mini` | 128,000 | 16,384 | $0.15 | $0.60 | Cheaper; the 128K context is enough for a meeting of up to ~1.5-2 h. |
+| DeepSeek V3 | `deepseek/deepseek-chat` | 131,072 | 16,000 | $0.20 | $0.80 | The cheapest; Russian is acceptable, fewer verified RU benchmarks. |
 
-Прикидка стоимости конспекта на gemini-2.5-flash: часовая встреча ≈ 10–15k токенов транскрипта на входе + ~1–2k на выходе ≈ **$0.01–0.02 за встречу** (без thinking; с thinking дороже). На фоне подписки 1990 ₽ саммари практически бесплатно — экономика провайдера транскрибации важнее.
+Estimated digest cost on gemini-2.5-flash: a one-hour meeting is about 10-15k transcript tokens in and ~1-2k out, about **$0.01-0.02 per meeting** (without thinking; more with thinking). Against a 1990 RUB subscription the summary is practically free: the transcription provider economics matter more.
 
-Цена — per-token, без минимума; пополнение prepaid-кредитами. Платёжная комиссия и пороги BYOK в публичных доках рендерятся JS-шаблонами (конкретные числа не подтверждены) — в расчёты не закладываем.
+Pricing is per token, with no minimum; top-up is by prepaid credits. The payment fee and BYOK thresholds are rendered by JS templates in the public docs (exact numbers not confirmed), so we do not include them in calculations.
 
-## Юридическая часть (152-ФЗ — ключевой риск)
+## Legal (152-FZ: the key risk)
 
-Транскрипт встречи содержит ПДн (речь, имена участников от mymeet). OpenRouter — оператор из **Нью-Йорка, США**; запрос к саммари = **трансграничная передача ПДн** в США. Это ровно та озабоченность, что и для отвергнутого `claude.go` (`docs/api/speech2text/README.md` «Встречный довод»): российский поставщик саммари (mymeet-шаблон, YandexGPT, GigaChat) её снимает, OpenRouter — нет.
+A meeting transcript contains personal data (speech, participant names from mymeet). OpenRouter is an operator from **New York, USA**; a summary request is a **cross-border transfer of personal data** to the USA. This is exactly the same concern as for the rejected `claude.go` (`docs/api/speech2text/README.md`, "Counterargument"): a Russian summary provider (a mymeet template, YandexGPT, GigaChat) removes it, OpenRouter does not.
 
-Митигации на стороне API (снижают retention у апстрима, но **не устраняют сам факт** трансграничной передачи):
-- `provider: {"data_collection": "deny"}` — маршрут только к провайдерам, не хранящим/не обучающимся на данных (по их заявленной политике).
-- `provider: {"zdr": true}` — только Zero Data Retention эндпоинты (список `GET /api/v1/endpoints/zdr`).
-- Минимизация ПДн до отправки (обезличивание имён спикеров) — на нашей стороне.
+Mitigations on the API side (they reduce retention at the upstream but **do not remove the fact** of the cross-border transfer):
+- `provider: {"data_collection": "deny"}`: routing only to providers that do not store or train on data (per their declared policy).
+- `provider: {"zdr": true}`: only Zero Data Retention endpoints (list `GET /api/v1/endpoints/zdr`).
+- Minimizing personal data before sending (anonymizing speaker names): on our side.
 
-Юр-основание трансграничной передачи (согласие/уведомление РКН по 152-ФЗ) — продуктово-правовой вопрос заказчику до публичного запуска. EU-эндпоинт `eu.openrouter.ai` (данные не покидают ЕЭЗ) — только Enterprise, для РФ-локализации нерелевантен.
+The legal basis for the cross-border transfer (consent/Roskomnadzor notification under 152-FZ) is a product-legal question for the customer before the public launch. The EU endpoint `eu.openrouter.ai` (data does not leave the EEA) is Enterprise only and irrelevant for Russian localization.
 
-## Приватность данных (дефолт)
+## Data privacy (default)
 
-По умолчанию OpenRouter **не хранит** промпты и ответы — только метаданные (токены, латентность, стоимость). Логирование контента (Input/Output Logging, retention ≥3 мес) и data-discount (1% скидки за право использовать данные) — оба **opt-in, по умолчанию выключены**. У каждого апстрим-провайдера своя политика; OpenRouter ответственности за неё не несёт — отсюда `data_collection: deny` / `zdr` выше.
+By default OpenRouter **does not store** prompts and responses, only metadata (tokens, latency, cost). Content logging (Input/Output Logging, retention of 3+ months) and the data discount (1% discount for the right to use data) are both **opt-in, off by default**. Each upstream provider has its own policy; OpenRouter is not responsible for it, hence `data_collection: deny` / `zdr` above.
 
-## Открытые вопросы
+## Open questions
 
-- Юр-основание трансграничной передачи ПДн по 152-ФЗ (заказчик) — live-risk перед широкой выдачей пользователям; текущий prod/dev runtime уже использует OpenRouter-саммари.
-- Выключать ли thinking gemini-2.5-flash ради цены/латентности vs качество конспекта (`API.md` §3) — настроить на живом транскрипте.
-- Обезличивание имён спикеров до отправки (общий трек с антискоупом, `docs/product.md` §6).
+- The legal basis for the cross-border transfer of personal data under 152-FZ (customer): a live-risk before a wide rollout to users; the current prod/dev runtime already uses the OpenRouter summary.
+- Whether to disable thinking in gemini-2.5-flash for cost/latency vs digest quality (`API.md` §3): to be tuned on a live transcript.
+- Anonymizing speaker names before sending (a shared track with the anti-scope, `docs/product.md` §6).
 
-## Источники
+## Sources
 
-[openrouter.ai/docs](https://openrouter.ai/docs/api/reference/overview) (quickstart, chat completions, errors-and-debugging, limits, provider-selection, structured-outputs, reasoning-tokens), [модели](https://openrouter.ai/models) (`google/gemini-2.5-flash`, `openai/gpt-4o-mini`, `deepseek/deepseek-chat`), [privacy](https://openrouter.ai/privacy), [terms](https://openrouter.ai/terms), [ZDR](https://openrouter.ai/docs/guides/features/zdr), [Sovereign AI / EU](https://openrouter.ai/docs/guides/features/sovereign-ai).
+[openrouter.ai/docs](https://openrouter.ai/docs/api/reference/overview) (quickstart, chat completions, errors-and-debugging, limits, provider-selection, structured-outputs, reasoning-tokens), [models](https://openrouter.ai/models) (`google/gemini-2.5-flash`, `openai/gpt-4o-mini`, `deepseek/deepseek-chat`), [privacy](https://openrouter.ai/privacy), [terms](https://openrouter.ai/terms), [ZDR](https://openrouter.ai/docs/guides/features/zdr), [Sovereign AI / EU](https://openrouter.ai/docs/guides/features/sovereign-ai).

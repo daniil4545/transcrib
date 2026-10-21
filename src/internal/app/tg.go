@@ -16,14 +16,14 @@ import (
 	tele "gopkg.in/telebot.v4"
 )
 
-// Уникальные идентификаторы inline-кнопок согласия. По ним gate определяет,
-// какие callback'и пропускать до согласия (whitelist, architecture.md §5 F0).
+// Unique identifiers of the consent inline buttons. The gate uses them to decide
+// which callbacks to let through before consent (whitelist, architecture.md §5 F0).
 const (
 	consentAccept  = "consent_accept"
 	consentDecline = "consent_decline"
 )
 
-// paySubscription — unique-идентификатор inline-кнопки оплаты.
+// paySubscription - unique identifier of the payment inline button.
 const (
 	paySubscription   = "pay_subscription"
 	payAutoRenew      = "pay_auto_renew"
@@ -31,29 +31,29 @@ const (
 	renewSubscription = "renew_subscription"
 )
 
-// Ярлыки reply-меню. Значения совпадают с текстом кнопок: telebot роутит
-// входящий текст на хендлер, зарегистрированный под этим же значением
-// (update.go "1:1 satisfaction" — срабатывает раньше OnText).
+// Reply-menu labels. The values match the button text: telebot routes
+// incoming text to the handler registered under the same value
+// (update.go "1:1 satisfaction" - fires before OnText).
 const (
 	menuSubscribe = "💳 Оформить подписку"
 	menuMyCalls   = "🎙 Мои звонки"
 	menuBalance   = "💰 Баланс"
 	menuAbout     = "ℹ️ О сервисе"
 	menuSupport   = "🛟 Служба поддержки"
-	// Старый текст не показываем в новом меню, но принимаем от уже выданных
-	// persistent-клавиатур Telegram.
+	// The old text is not shown in the new menu, but is accepted from
+	// persistent Telegram keyboards that were already issued.
 	menuSupportOld = "💬 Поддержка"
 )
 
-// Unique-идентификаторы inline-кнопок панели «Мои звонки». Payload кнопки несёт
-// jobID; хендлер регистрируется один раз на unique и читает id из c.Data().
+// Unique identifiers of the inline buttons of the "My calls" panel. The button payload carries
+// jobID; the handler is registered once per unique and reads the id from c.Data().
 const (
-	jobCancel           = "job_cancel"            // payload "id:page"; отмена из карточки
-	jobRedeliver        = "job_redeliver"         // payload "id:page"; повторная доставка транскрипта
-	jobRedeliverSummary = "job_redeliver_summary" // payload "id:page"; повторная доставка саммари
-	jobOpen             = "job_open"              // payload "id:page"; открыть карточку звонка
-	jobBack             = "job_back"              // payload "page"; вернуться из карточки в список
-	jobsPage            = "jobs_page"             // payload "page"; листание списка (◀/▶)
+	jobCancel           = "job_cancel"            // payload "id:page"; cancel from the card
+	jobRedeliver        = "job_redeliver"         // payload "id:page"; redeliver the transcript
+	jobRedeliverSummary = "job_redeliver_summary" // payload "id:page"; redeliver the summary
+	jobOpen             = "job_open"              // payload "id:page"; open the call card
+	jobBack             = "job_back"              // payload "page"; go back from the card to the list
+	jobsPage            = "jobs_page"             // payload "page"; list paging (left/right)
 )
 
 const (
@@ -63,8 +63,8 @@ const (
 
 const freshPendingPaymentWindow = 30 * time.Minute
 
-// texts — пользовательские сообщения бота (бренд «transcrib»).
-// Финальный юридический текст согласия 152-ФЗ — за заказчиком.
+// texts - the bot's user-facing messages (brand "transcrib").
+// The final legal text of the 152-FZ consent is owned by the customer.
 type texts struct {
 	consent              string
 	acceptButton         string
@@ -108,8 +108,8 @@ type texts struct {
 
 func defaultTexts() texts {
 	return texts{
-		// Временная редакция 152-ФЗ. Финальный юридический текст и ссылка на полную
-		// политику — за заказчиком.
+		// Temporary wording for 152-FZ. The final legal text and the link to the full
+		// policy are owned by the customer.
 		consent: "Перед началом — согласие на обработку данных (152-ФЗ).\n\n" +
 			"Чтобы сделать расшифровку, сервис записывает аудио ваших онлайн-встреч и " +
 			"передаёт его подрядчику для распознавания речи. В расшифровке реплики " +
@@ -181,7 +181,7 @@ func defaultTexts() texts {
 	}
 }
 
-// Bot — Telegram-слой: команды, FSM онбординга, gate согласия (architecture.md §4).
+// Bot - Telegram layer: commands, onboarding FSM, consent gate (architecture.md §4).
 type Bot struct {
 	bot           *tele.Bot
 	storage       *Storage
@@ -189,8 +189,8 @@ type Bot struct {
 	summarizer    Summarizer
 	texts         texts
 	consentMarkup *tele.ReplyMarkup
-	menuMarkup    *tele.ReplyMarkup // постоянная reply-клавиатура главного меню
-	payMarkup     *tele.ReplyMarkup // inline-кнопки оплаты на экране подписки
+	menuMarkup    *tele.ReplyMarkup // persistent reply keyboard of the main menu
+	payMarkup     *tele.ReplyMarkup // inline payment buttons on the subscription screen
 
 	trialLimitMinutes int
 
@@ -200,13 +200,13 @@ type Bot struct {
 	awaitPaymentEmail     map[int64]struct{}
 	awaitPaymentAutoRenew map[int64]bool
 
-	// providers — реализации всех сконфигуренных поставщиков. Панель «Мои звонки»
-	// резолвит нужного по job.Provider: Cancel (остановить бота) и Fetch (повторно
-	// достать транскрипт) идут к поставщику-создателю джобы, а не к активному —
-	// иначе после смены провайдера чужой external_job_id даёт HTTP 400.
+	// providers - implementations of all configured providers. The "My calls" panel
+	// resolves the right one by job.Provider: Cancel (stop the bot) and Fetch (re-fetch
+	// the transcript) go to the provider that created the job, not the active one -
+	// otherwise after a provider switch a foreign external_job_id gives HTTP 400.
 	providers map[string]TranscriptionProvider
-	// activeProvider — имя поставщика для НОВЫХ джоб (= TRANSCRIPTION_PROVIDER),
-	// пишется в job.Provider при CreateJob.
+	// activeProvider - provider name for NEW jobs (= TRANSCRIPTION_PROVIDER),
+	// written to job.Provider on CreateJob.
 	activeProvider string
 
 	recurringPaymentsEnabled bool
@@ -261,9 +261,9 @@ func (b *Bot) setup() {
 	b.bot.Handle(&accept, b.onConsentAccept)
 	b.bot.Handle(&decline, b.onConsentDecline)
 
-	// Главное меню — постоянная reply-клавиатура снизу (показывается после согласия).
-	// Кнопки = вся основная навигация (всегда под рукой); команды (setCommands) —
-	// только утилиты /start, /help. Так нет дубля «команда И кнопка» одного действия.
+	// Main menu - a persistent reply keyboard at the bottom (shown after consent).
+	// Buttons = all the main navigation (always at hand); commands (setCommands) -
+	// utilities /start, /help only. This avoids duplicating one action as "command AND button".
 	menu := &tele.ReplyMarkup{ResizeKeyboard: true}
 	myCalls := menu.Text(menuMyCalls)
 	subscribe := menu.Text(menuSubscribe)
@@ -280,8 +280,8 @@ func (b *Bot) setup() {
 	b.bot.Handle(&support, b.onSupport)
 	b.bot.Handle(&supportOld, b.onSupport)
 
-	// Inline-навигация и действия панели «Мои звонки». Регистрируем по unique;
-	// payload (id/page) — в Data. Список → карточка → действия, всё через c.Edit.
+	// Inline navigation and actions of the "My calls" panel. Registered per unique;
+	// payload (id/page) goes in Data. List -> card -> actions, everything via c.Edit.
 	openBtn := tele.Btn{Unique: jobOpen}
 	backBtn := tele.Btn{Unique: jobBack}
 	pageBtn := tele.Btn{Unique: jobsPage}
@@ -295,7 +295,7 @@ func (b *Bot) setup() {
 	b.bot.Handle(&redeliverBtn, b.onRedeliver)
 	b.bot.Handle(&summaryBtn, b.onRedeliverSummary)
 
-	// Кнопка оплаты на экране подписки. Legacy pay_auto_renew оставлен скрытым alias для старых callback.
+	// Payment button on the subscription screen. Legacy pay_auto_renew is kept as a hidden alias for old callbacks.
 	pay := &tele.ReplyMarkup{}
 	payBtn := pay.Data(b.texts.payButton, paySubscription)
 	pay.Inline(pay.Row(payBtn))
@@ -308,8 +308,8 @@ func (b *Bot) setup() {
 	b.bot.Handle(&disableAutoPayBtn, b.onDisableAutoRenew)
 	b.bot.Handle(&renewPayBtn, b.onPaySubscription)
 
-	// Legacy Telegram Payments оставлены как rollback baseline до отдельного удаления.
-	// Целевой поток оплаты ниже идёт через direct payment links ЮKassa.
+	// Legacy Telegram Payments are kept as a rollback baseline until a separate removal.
+	// The target payment flow below goes through YooKassa direct payment links.
 	b.bot.Handle(tele.OnCheckout, b.onPreCheckout)
 	b.bot.Handle(tele.OnPayment, b.onSuccessfulPayment)
 
@@ -318,11 +318,11 @@ func (b *Bot) setup() {
 	b.setCommands()
 }
 
-// setCommands задаёт список команд бота — кнопка "Меню" снизу-слева в клиенте.
-// Best-effort: при сетевой ошибке логируем, но запуск бота не валим.
+// setCommands sets the bot command list - the "Menu" button at the bottom left in the client.
+// Best-effort: on a network error we log it but do not fail the bot startup.
 func (b *Bot) setCommands() {
-	// Только утилиты: навигация — на reply-кнопках (см. setup). /balance остаётся
-	// рабочим хендлером, но в меню команд не дублируем (есть кнопка «Баланс»).
+	// Utilities only: navigation is on reply buttons (see setup). /balance stays a
+	// working handler, but is not duplicated in the command menu (there is a "Balance" button).
 	cmds := []tele.Command{
 		{Text: "start", Description: "Начать"},
 		{Text: "help", Description: "Помощь"},
@@ -332,14 +332,14 @@ func (b *Bot) setCommands() {
 	}
 }
 
-// Start запускает long polling (блокирует до Stop).
+// Start starts long polling (blocks until Stop).
 func (b *Bot) Start() { b.bot.Start() }
 
-// Stop останавливает long polling.
+// Stop stops long polling.
 func (b *Bot) Stop() { b.bot.Stop() }
 
-// gate — единая точка: регистрирует юзера на пользовательских апдейтах и блокирует
-// всё, кроме whitelist, пока нет согласия 152-ФЗ (architecture.md §5/§9).
+// gate - the single point: registers the user on user updates and blocks
+// everything except the whitelist until 152-FZ consent exists (architecture.md §5/§9).
 func (b *Bot) gate(next tele.HandlerFunc) tele.HandlerFunc {
 	return func(c tele.Context) error {
 		if isPaymentUpdate(c) {
@@ -354,8 +354,8 @@ func (b *Bot) gate(next tele.HandlerFunc) tele.HandlerFunc {
 		user, err := b.storage.GetOrCreateUser(ctx, sender.ID)
 		if err != nil {
 			slog.Error("get or create user", "err", err, "user_id", sender.ID)
-			// Для callback снимаем индикатор загрузки, иначе у юзера висят "часики".
-			// Для обычного сообщения отвечаем явно, иначе тишина читается как зависание.
+			// For a callback we clear the loading indicator, otherwise the user sees a "clock".
+			// For a regular message we reply explicitly, otherwise silence reads as a hang.
 			if c.Callback() != nil {
 				if rerr := c.Respond(); rerr != nil {
 					slog.Warn("respond callback", "err", rerr)
@@ -363,7 +363,7 @@ func (b *Bot) gate(next tele.HandlerFunc) tele.HandlerFunc {
 			} else if serr := c.Send(b.texts.internalError); serr != nil {
 				slog.Warn("send internal error", "err", serr)
 			}
-			return nil // апдейт не продолжаем: без user/consent обычные хендлеры небезопасны
+			return nil // do not continue the update: without user/consent the regular handlers are unsafe
 		}
 
 		if user.HasConsent() || allowedBeforeConsent(c) {
@@ -374,21 +374,21 @@ func (b *Bot) gate(next tele.HandlerFunc) tele.HandlerFunc {
 	}
 }
 
-// isPaymentUpdate пропускает Telegram Payments callbacks мимо consent gate.
-// pre_checkout обязан ответить быстро и без БД; successful_payment сам создаёт
-// пользователя перед записью платежа, чтобы не терять списанные деньги из-за gate.
+// isPaymentUpdate lets Telegram Payments callbacks past the consent gate.
+// pre_checkout must answer quickly and without the DB; successful_payment creates
+// the user itself before recording the payment, so as not to lose charged money because of the gate.
 func isPaymentUpdate(c tele.Context) bool {
 	return c.PreCheckoutQuery() != nil || c.Payment() != nil
 }
 
-// allowedBeforeConsent — whitelist по точным значениям (architecture.md §5, SF-3):
-// до consent_at проходят только /start, /help и callback'и согласия.
+// allowedBeforeConsent - whitelist by exact values (architecture.md §5, SF-3):
+// before consent_at only /start, /help and the consent callbacks pass.
 func allowedBeforeConsent(c tele.Context) bool {
 	if cb := c.Callback(); cb != nil {
 		return cb.Unique == consentAccept || cb.Unique == consentDecline
 	}
 	if m := c.Message(); m != nil {
-		// Берём саму команду без аргументов и @botname (/start@bot, /start arg).
+		// Take the command itself without arguments and @botname (/start@bot, /start arg).
 		cmd := m.Text
 		if i := strings.IndexAny(cmd, " @"); i >= 0 {
 			cmd = cmd[:i]
@@ -414,7 +414,7 @@ func (b *Bot) onHelp(c tele.Context) error {
 	return c.Send(b.texts.help)
 }
 
-// onSubscription — экран подписки с inline-кнопкой оплаты (фасад).
+// onSubscription - subscription screen with an inline payment button (facade).
 func (b *Bot) onSubscription(c tele.Context) error {
 	user, _ := c.Get("user").(User)
 	err := c.Send(b.texts.subscription, b.payMarkup)
@@ -430,9 +430,9 @@ func (b *Bot) onSupport(c tele.Context) error {
 	return c.Send(b.texts.support)
 }
 
-// onBalance показывает остаток квоты: активную подписку или остаток триала (F6).
+// onBalance shows the remaining quota: an active subscription or the trial remainder (F6).
 func (b *Bot) onBalance(c tele.Context) error {
-	// gate кладёт user в контекст после согласия; guard страхует инвариант явно.
+	// gate puts the user in the context after consent; the guard enforces the invariant explicitly.
 	user, ok := c.Get("user").(User)
 	if !ok || user.TelegramID == 0 {
 		slog.Error("onBalance: user missing in context")
@@ -603,7 +603,7 @@ func minuteWord(minutes int) string {
 	}
 }
 
-// jobStatusLabel — человекочитаемый статус звонка для панели «Мои звонки».
+// jobStatusLabel - human-readable call status for the "My calls" panel.
 func jobStatusLabel(s JobStatus) string {
 	switch s {
 	case JobCreated:
@@ -627,13 +627,13 @@ func jobStatusLabel(s JobStatus) string {
 	}
 }
 
-// jobPayload кодирует jobID и страницу списка в payload inline-кнопки ("id:page").
-// page нужен, чтобы из карточки вернуться на ту же страницу списка.
+// jobPayload encodes jobID and the list page into the inline button payload ("id:page").
+// The page is needed to return from the card to the same list page.
 func jobPayload(jobID int64, page int) string {
 	return strconv.FormatInt(jobID, 10) + ":" + strconv.Itoa(page)
 }
 
-// parseJobPayload разбирает "id:page". ok=false при мусоре (callback не наш формат).
+// parseJobPayload parses "id:page". ok=false on garbage (callback is not in our format).
 func parseJobPayload(data string) (jobID int64, page int, ok bool) {
 	id, rest, found := strings.Cut(data, ":")
 	jobID, err := strconv.ParseInt(id, 10, 64)
@@ -641,19 +641,19 @@ func parseJobPayload(data string) (jobID int64, page int, ok bool) {
 		return 0, 0, false
 	}
 	if found {
-		// Мусорная страница → 0: payload наш, страница не критична для корректности.
+		// Garbage page -> 0: the payload is ours, the page is not critical for correctness.
 		page, _ = strconv.Atoi(rest)
 	}
 	return jobID, page, true
 }
 
-// renderCallsList строит текст+markup страницы списка звонков (по callsPageSize).
-// empty=true — на странице звонков нет (показать myCallsEmpty без кнопок).
+// renderCallsList builds the text+markup of a calls list page (by callsPageSize).
+// empty=true - there are no calls on the page (show myCallsEmpty without buttons).
 func (b *Bot) renderCallsList(ctx context.Context, userID int64, page int) (string, *tele.ReplyMarkup, bool, error) {
 	if page < 0 {
 		page = 0
 	}
-	// +1 строка сверх страницы — узнать, есть ли следующая (без COUNT).
+	// +1 row beyond the page - to find out whether there is a next one (without COUNT).
 	jobs, err := b.storage.ListUserJobs(ctx, userID, time.Now().Add(-callsHistoryLimit), callsPageSize+1, page*callsPageSize)
 	if err != nil {
 		return "", nil, false, err
@@ -689,7 +689,7 @@ func (b *Bot) renderCallsList(ctx context.Context, userID int64, page int) (stri
 	return sb.String(), markup, false, nil
 }
 
-// renderCallCard строит карточку звонка: статус + действия по статусу + «к списку».
+// renderCallCard builds a call card: status + actions by status + "to list".
 func (b *Bot) renderCallCard(ctx context.Context, userID, jobID int64, page int) (string, *tele.ReplyMarkup, error) {
 	job, err := b.storage.UserJob(ctx, userID, jobID)
 	if err != nil {
@@ -713,7 +713,7 @@ func (b *Bot) renderCallCard(ctx context.Context, userID, jobID int64, page int)
 	return text, markup, nil
 }
 
-// editCard перерисовывает карточку звонка in-place (после отмены и т.п.).
+// editCard redraws the call card in place (after a cancel, etc.).
 func (b *Bot) editCard(c tele.Context, userID, jobID int64, page int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -728,8 +728,8 @@ func (b *Bot) editCard(c tele.Context, userID, jobID int64, page int) error {
 	return c.Edit(text, markup)
 }
 
-// onMyCalls открывает панель «Мои звонки» (первое сообщение — новое, дальше навигация
-// редактирует его in-place).
+// onMyCalls opens the "My calls" panel (the first message is new, then navigation
+// edits it in place).
 func (b *Bot) onMyCalls(c tele.Context) error {
 	user, ok := c.Get("user").(User)
 	if !ok || user.TelegramID == 0 {
@@ -749,7 +749,7 @@ func (b *Bot) onMyCalls(c tele.Context) error {
 	return c.Send(text, markup)
 }
 
-// onJobsPage листает список (◀/▶) — редактирует то же сообщение. Payload — индекс страницы.
+// onJobsPage pages the list (left/right) - edits the same message. Payload - page index.
 func (b *Bot) onJobsPage(c tele.Context) error {
 	if err := c.Respond(); err != nil {
 		slog.Warn("respond callback", "err", err)
@@ -776,7 +776,7 @@ func (b *Bot) onJobsPage(c tele.Context) error {
 	return c.Edit(text, markup)
 }
 
-// onJobOpen открывает карточку звонка — редактирует список в карточку.
+// onJobOpen opens the call card - edits the list into the card.
 func (b *Bot) onJobOpen(c tele.Context) error {
 	if err := c.Respond(); err != nil {
 		slog.Warn("respond callback", "err", err)
@@ -793,7 +793,7 @@ func (b *Bot) onJobOpen(c tele.Context) error {
 	return b.editCard(c, user.TelegramID, jobID, page)
 }
 
-// onJobBack возвращает из карточки в список на ту же страницу (редактирует сообщение).
+// onJobBack returns from the card to the list at the same page (edits the message).
 func (b *Bot) onJobBack(c tele.Context) error {
 	if err := c.Respond(); err != nil {
 		slog.Warn("respond callback", "err", err)
@@ -819,8 +819,8 @@ func (b *Bot) onJobBack(c tele.Context) error {
 	return c.Edit(text, markup)
 }
 
-// onCancelJob обрабатывает action карточки: created/joining отменяет с refund,
-// recording останавливает запись и ждёт transcript. Payload — "id:page".
+// onCancelJob handles the card action: created/joining are cancelled with refund,
+// recording stops the recording and waits for the transcript. Payload - "id:page".
 func (b *Bot) onCancelJob(c tele.Context) error {
 	user, ok := c.Get("user").(User)
 	if !ok || user.TelegramID == 0 {
@@ -977,8 +977,8 @@ func (b *Bot) refundStoppedJob(ctx context.Context, jobID int64, reason string) 
 	}
 }
 
-// onRedeliver повторно достаёт транскрипт готового звонка у поставщика (s2t хранит до
-// 90 дней) и присылает файлом (карточка остаётся). Payload — "id:page".
+// onRedeliver re-fetches the transcript of a finished call from the provider (s2t keeps it for
+// 90 days) and sends it as a file (the card stays). Payload - "id:page".
 func (b *Bot) onRedeliver(c tele.Context) error {
 	user, ok := c.Get("user").(User)
 	if !ok || user.TelegramID == 0 {
@@ -1007,10 +1007,10 @@ func (b *Bot) onRedeliver(c tele.Context) error {
 		"event", "telegram_callback", "phase", "telegram",
 		"callback", jobRedeliver, "job_id", jobID, "user_id", user.TelegramID,
 		"provider", job.Provider, "external_job_id", *job.ExternalJobID)
-	// Резолвим поставщика-создателя по job.Provider: external_job_id принадлежит его
-	// пространству. Активный мог смениться (TRANSCRIPTION_PROVIDER) — его Fetch вернул бы
-	// HTTP 400 на чужой id. Нет в мапе (поставщик отключён / старая джоба с provider='') —
-	// честно сообщаем, что запись недоступна, вместо невнятной ошибки.
+	// Resolve the creating provider by job.Provider: external_job_id belongs to its
+	// namespace. The active one may have changed (TRANSCRIPTION_PROVIDER) - its Fetch would return
+	// HTTP 400 on a foreign id. Absent from the map (provider disabled / old job with provider='') -
+	// honestly report that the recording is unavailable, instead of a vague error.
 	prov, ok := b.providers[job.Provider]
 	if !ok {
 		slog.Warn("redeliver: provider not configured", "job_id", jobID, "provider", job.Provider)
@@ -1037,9 +1037,9 @@ func (b *Bot) onRedeliver(c tele.Context) error {
 	return c.Send(doc)
 }
 
-// onRedeliverSummary повторно выдаёт или восстанавливает саммари готового звонка.
-// Основной путь — кэш summary_md; для terminal job без кэша пробуем заново получить
-// transcript у provider и сгенерировать конспект.
+// onRedeliverSummary re-issues or restores the summary of a finished call.
+// The main path is the summary_md cache; for a terminal job without a cache we try to fetch the
+// transcript from the provider again and generate the summary.
 func (b *Bot) onRedeliverSummary(c tele.Context) error {
 	user, ok := c.Get("user").(User)
 	if !ok || user.TelegramID == 0 {
@@ -1200,7 +1200,7 @@ func summaryDocument(job Job, summary string) *tele.Document {
 	}
 }
 
-// onPaySubscription запускает сценарий оплаты по ссылке ЮKassa.
+// onPaySubscription starts the YooKassa payment link flow.
 func (b *Bot) onPaySubscription(c tele.Context) error {
 	return b.onPay(c, b.recurringPaymentsEnabled)
 }
@@ -1216,7 +1216,7 @@ func (b *Bot) onPayAutoRenew(c tele.Context) error {
 }
 
 func (b *Bot) onPay(c tele.Context, autoRenew bool) error {
-	// Сначала снимаем "часики" у callback, затем шлём инвойс/сообщение.
+	// First clear the "clock" on the callback, then send the invoice/message.
 	if err := c.Respond(); err != nil {
 		slog.Warn("respond callback", "err", err)
 	}
@@ -1309,13 +1309,13 @@ func (b *Bot) sendPaymentLink(c tele.Context, userID int64, email string, autoRe
 	return c.Send(b.texts.payLinkReady, markup)
 }
 
-// onPreCheckout отвечает на pre_checkout_query синхронно (≤10с, §5.5): только
-// in-memory валидация формата payload, без БД. Бизнес-логика подписки —
-// в onSuccessfulPayment (§5.4) под защитой UNIQUE(telegram_payment_charge_id).
+// onPreCheckout answers pre_checkout_query synchronously (<=10s, §5.5): only
+// in-memory validation of the payload format, no DB. The subscription business logic is
+// in onSuccessfulPayment (§5.4) under the protection of UNIQUE(telegram_payment_charge_id).
 func (b *Bot) onPreCheckout(c tele.Context) error {
 	q := c.PreCheckoutQuery()
-	// nil-guard на платёжном пути: telebot роутит сюда только при наличии query,
-	// но малформированный апдейт не должен паниковать на q.Payload.
+	// nil-guard on the payment path: telebot routes here only when a query exists,
+	// but a malformed update must not panic on q.Payload.
 	if q == nil {
 		slog.Error("onPreCheckout: nil pre_checkout_query")
 		return nil
@@ -1342,9 +1342,9 @@ func (b *Bot) onPreCheckout(c tele.Context) error {
 	return nil
 }
 
-// onSuccessfulPayment активирует подписку по successful_payment (§5.4, идемпотентно).
-// Ошибку записи логируем и сообщаем юзеру: деньги списаны, активация требует ручного
-// вмешательства (Telegram повторит апдейт, UNIQUE защитит от дубля при ретрае).
+// onSuccessfulPayment activates the subscription by successful_payment (§5.4, idempotent).
+// A write error is logged and reported to the user: the money is charged, activation needs manual
+// intervention (Telegram will repeat the update, UNIQUE protects against a duplicate on retry).
 func (b *Bot) onSuccessfulPayment(c tele.Context) error {
 	sender := c.Sender()
 	if sender == nil {
@@ -1353,8 +1353,8 @@ func (b *Bot) onSuccessfulPayment(c tele.Context) error {
 	}
 	userID := sender.ID
 	p := c.Payment()
-	// nil-guard на платёжном пути: разыменование nil-payment (малформированный
-	// апдейт / будущая правка telebot) иначе паникует и теряет апдейт без следа.
+	// nil-guard on the payment path: dereferencing a nil payment (malformed
+	// update / future telebot change) would otherwise panic and lose the update without a trace.
 	if p == nil {
 		slog.Error("onSuccessfulPayment: nil payment", "user_id", userID)
 		return c.Send(b.texts.paymentError)
@@ -1365,8 +1365,8 @@ func (b *Bot) onSuccessfulPayment(c tele.Context) error {
 		slog.Error("get or create payment user", "err", err, "user_id", userID)
 		return c.Send(b.texts.paymentError)
 	}
-	// Передаём аутентифицированного плательщика (c.Sender) — он авторитетен для user_id;
-	// billing сверяет его с владельцем из payload (defense-in-depth от mis-credit).
+	// Pass the authenticated payer (c.Sender) - it is authoritative for user_id;
+	// billing checks it against the owner from the payload (defense-in-depth against mis-credit).
 	if err := b.billing.RecordPayment(ctx, userID, p); err != nil {
 		slog.Error("record payment", "err", err, "user_id", userID,
 			"telegram_charge_id", p.TelegramChargeID, "provider_charge_id", p.ProviderChargeID)
@@ -1420,9 +1420,9 @@ func (b *Bot) onConsentAccept(c tele.Context) error {
 	slog.Info("telegram consent accepted",
 		"event", "consent_accepted", "phase", "telegram",
 		"user_id", user.TelegramID, "chat_id", user.TelegramID)
-	b.removeButtons(c) // убираем кнопки, чтобы их нельзя было нажать повторно
-	// Снимаем "часики" best-effort; главное — подтвердить согласие сообщением.
-	// SF-1: повторное согласие в S2 — не ошибка, приветствие показываем всё равно.
+	b.removeButtons(c) // remove the buttons so they cannot be pressed again
+	// Clear the "clock" best-effort; the main thing is to confirm consent with a message.
+	// SF-1: a repeated consent in S2 is not an error, the greeting is shown anyway.
 	if err := c.Respond(); err != nil {
 		slog.Warn("respond callback", "err", err)
 	}
@@ -1430,13 +1430,13 @@ func (b *Bot) onConsentAccept(c tele.Context) error {
 }
 
 func (b *Bot) onConsentDecline(c tele.Context) error {
-	// Строгий guard на user (как в onConsentAccept) здесь не нужен: записи в БД
-	// нет, а нулевой User даёт HasConsent()==false → обычная ветка отказа.
+	// A strict guard on user (as in onConsentAccept) is not needed here: there is no DB
+	// write, and a zero User gives HasConsent()==false -> the regular decline branch.
 	user, _ := c.Get("user").(User)
 	if err := c.Respond(); err != nil {
 		slog.Warn("respond callback", "err", err)
 	}
-	// Кнопка нажата на старом сообщении /start, когда согласие уже дано (S2).
+	// The button was pressed on an old /start message when consent is already given (S2).
 	if user.HasConsent() {
 		b.removeButtons(c)
 		return c.Send(b.texts.welcome, b.menuMarkup)
@@ -1457,18 +1457,18 @@ func (b *Bot) trackAnalytics(userID int64, eventType, eventKey string, metadata 
 	}
 }
 
-// removeButtons снимает inline-клавиатуру у сообщения callback'а (best-effort).
-// Текст сообщения остаётся — для согласия 152-ФЗ важно, чтобы юзер видел,
-// на что согласился.
+// removeButtons removes the inline keyboard from the callback's message (best-effort).
+// The message text stays - for the 152-FZ consent it is important that the user sees
+// what they agreed to.
 func (b *Bot) removeButtons(c tele.Context) {
 	if err := c.Edit(&tele.ReplyMarkup{}); err != nil {
 		slog.Warn("remove consent buttons", "err", err)
 	}
 }
 
-// SendText отправляет простое текстовое сообщение в чат chatID.
-// Нужен оркестратору для notify-замыкания: поле bot неэкспортируемое,
-// прямой доступ снаружи пакета невозможен.
+// SendText sends a plain text message to the chat chatID.
+// The orchestrator needs it for the notify closure: the bot field is unexported,
+// direct access from outside the package is impossible.
 func (b *Bot) SendText(chatID int64, text string) error {
 	_, err := b.bot.Send(tele.ChatID(chatID), text)
 	if err != nil {
@@ -1477,9 +1477,9 @@ func (b *Bot) SendText(chatID int64, text string) error {
 	return nil
 }
 
-// EditStatus редактирует ранее отправленное статус-сообщение звонка (по id) в личном
-// чате юзера. Нужен оркестратору, чтобы обновлять один статус по ходу обработки
-// (принял → бот на встрече → готово), а не слать поток новых сообщений.
+// EditStatus edits a previously sent call status message (by id) in the user's private
+// chat. The orchestrator needs it to update a single status during processing
+// (accepted -> bot in meeting -> done) instead of sending a stream of new messages.
 func (b *Bot) EditStatus(chatID, messageID int64, text string) error {
 	_, err := b.bot.Edit(tele.StoredMessage{
 		MessageID: strconv.Itoa(int(messageID)),
@@ -1491,8 +1491,8 @@ func (b *Bot) EditStatus(chatID, messageID int64, text string) error {
 	return nil
 }
 
-// onText: текст после согласия. Ссылка на встречу — создаём Job и подтверждаем,
-// иначе подсказываем, что прислать.
+// onText: text after consent. A meeting link - create a Job and confirm,
+// otherwise hint at what to send.
 func (b *Bot) onText(c tele.Context) error {
 	user, ok := c.Get("user").(User)
 	if !ok || user.TelegramID == 0 {
@@ -1578,13 +1578,13 @@ func (b *Bot) onText(c tele.Context) error {
 		"job_id", job.ID, "user_id", user.TelegramID, "chat_id", user.TelegramID,
 		"provider", job.Provider, "current_status", job.Status,
 		"is_trial", job.IsTrial, "meeting_host", meetingHost(link), "platform", meetingPlatform(link))
-	// Статус-сообщение, которое оркестратор затем РЕДАКТИРУЕТ по ходу обработки
-	// (принял → бот на встрече → готово) — один эволюционирующий месседж вместо
-	// потока новых. Шлём через b.bot.Send, чтобы получить его id и сохранить на джобе.
+	// The status message that the orchestrator then EDITS during processing
+	// (accepted -> bot in meeting -> done) - one evolving message instead of
+	// a stream of new ones. Sent via b.bot.Send to get its id and store it on the job.
 	msg, serr := b.bot.Send(c.Recipient(), acceptedText(link))
 	if serr != nil {
 		slog.Error("send accepted status", "err", serr, "job_id", job.ID, "user_id", user.TelegramID)
-		return nil // джоба создана; обработка идёт и без статус-сообщения
+		return nil // job created; processing goes on without the status message
 	}
 	sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer scancel()
@@ -1634,7 +1634,7 @@ func meetingHost(link string) string {
 	return strings.ToLower(u.Hostname())
 }
 
-// meetingPlatform — человекочитаемое имя платформы по хосту ссылки (эхо в подтверждении).
+// meetingPlatform - human-readable platform name by the link host (echo in the confirmation).
 func meetingPlatform(link string) string {
 	u, err := url.Parse(link)
 	if err != nil {
@@ -1653,22 +1653,22 @@ func meetingPlatform(link string) string {
 	}
 }
 
-// acceptedText — первое сообщение эволюции статуса (шаг 1): эхо платформы (юзер видит,
-// что распознали правильно) + «отправляю бота». Дальше это же сообщение редактирует
-// orchestrator по фазам: joining -> recording -> processing -> done (см. updateStatus).
+// acceptedText - the first message of the status evolution (step 1): platform echo (the user sees
+// that we recognized it correctly) + "sending the bot". Then the orchestrator edits this same message
+// by phases: joining -> recording -> processing -> done (see updateStatus).
 func acceptedText(link string) string {
 	return fmt.Sprintf("Ссылку получил. Отправляю бота на %s.",
 		meetingPlatform(link))
 }
 
-// Грубый экстрактор URL из текста: всё, что после https?://. Хост и схему
-// валидируем уже через net/url ниже — там точнее обходятся хитрые случаи
-// (userinfo, порт, регистр), регулярке такое поручать опасно. (?i) — RFC 3986
-// разрешает scheme в любом регистре.
+// Rough URL extractor from text: everything after https?://. The host and scheme
+// are validated later via net/url below - it handles tricky cases
+// (userinfo, port, case) more precisely, and entrusting that to a regexp is risky. (?i) - RFC 3986
+// allows the scheme in any case.
 var meetingLinkRe = regexp.MustCompile(`(?i)https?://\S+`)
 
-// Whitelist хостов встреч. Поддомены допускаются (us05web.zoom.us и т.п.),
-// проверка — suffix-match с точкой, чтобы evilzoom.us не пролез.
+// Whitelist of meeting hosts. Subdomains are allowed (us05web.zoom.us etc.),
+// the check is a suffix match with a dot, so that evilzoom.us does not slip through.
 var allowedMeetingHosts = []string{
 	"zoom.us",
 	"zoomgov.com",
@@ -1677,45 +1677,45 @@ var allowedMeetingHosts = []string{
 	"telemost.yandex.com",
 }
 
-// linkResult — исход разбора ссылки на встречу из текста юзера.
+// linkResult - the outcome of parsing a meeting link from the user's text.
 type linkResult int
 
 const (
-	linkNone       linkResult = iota // ссылки на встречу в тексте нет
-	linkValid                        // валидная join-ссылка, можно создавать Job
-	linkZoomWebApp                   // веб-клиент Zoom (app.zoom.us) — бот по ней не зайдёт
+	linkNone       linkResult = iota // no meeting link in the text
+	linkValid                        // valid join link, a Job can be created
+	linkZoomWebApp                   // Zoom web client (app.zoom.us) - the bot cannot join through it
 )
 
-// findMeetingLink: первая ссылка на встречу из текста и её классификация.
-// linkZoomWebApp выделен отдельно, чтобы дать юзеру конкретную подсказку
-// (живой тест 2026-06-15: app.zoom.us/wc/.../start проходила whitelist, но
-// s2t-бот по ней зайти не может → джоба failed; architecture.md §11 #3).
+// findMeetingLink: the first meeting link from the text and its classification.
+// linkZoomWebApp is separated to give the user a specific hint
+// (live test 2026-06-15: app.zoom.us/wc/.../start passed the whitelist, but
+// the s2t bot cannot join through it -> job failed; architecture.md §11 #3).
 func findMeetingLink(text string) (string, linkResult) {
 	raw := meetingLinkRe.FindString(text)
 	if raw == "" {
 		return "", linkNone
 	}
-	// \S+ жадно цепляет хвостовую пунктуацию ("...j/1)") — срезаем до парсинга,
-	// иначе ')' попадёт в Path и собьёт валидацию по виду пути.
+	// \S+ greedily grabs trailing punctuation ("...j/1)") - cut it before parsing,
+	// otherwise ')' ends up in Path and breaks validation by path shape.
 	candidate := strings.TrimRight(raw, `.,;:!?)]}>"'»`)
 
 	u, err := url.Parse(candidate)
 	if err != nil {
 		return "", linkNone
 	}
-	// Только https: http-схема пропускает downgrade-сценарии, реальные
-	// meeting-ссылки от провайдеров всегда https.
+	// https only: the http scheme lets downgrade scenarios through, real
+	// meeting links from providers are always https.
 	if u.Scheme != "https" {
 		return "", linkNone
 	}
-	// Hostname() отдаёт хост без порта и userinfo (а Host — с ними).
+	// Hostname() returns the host without port and userinfo (while Host has them).
 	host := strings.ToLower(u.Hostname())
-	// Яндекс раздаёт Телемост-ссылки через два домена: telemost.yandex.ru и
-	// telemost.360.yandex.ru (360 = суббренд Яндекса). Оба ведут в одну встречу
-	// (подтверждено боевым тестом 2026-06-19), но провайдер принимает только
-	// базовый домен, поэтому нормализуем на входе. Пересобираем ссылку из u, а не
-	// строковой заменой по исходному тексту: host уже lowercase, и ссылка в
-	// смешанном регистре (Telemost.360.Yandex.RU) иначе не нормализовалась бы.
+	// Yandex hands out Telemost links via two domains: telemost.yandex.ru and
+	// telemost.360.yandex.ru (360 = Yandex sub-brand). Both lead to the same meeting
+	// (confirmed by a live test 2026-06-19), but the provider accepts only the
+	// base domain, so we normalize on input. We rebuild the link from u rather than by a
+	// string replace on the source text: the host is already lowercase, and a link in
+	// mixed case (Telemost.360.Yandex.RU) would otherwise not be normalized.
 	if base, ok := normalizeTelemostHost(host); ok {
 		host = base
 		if p := u.Port(); p != "" {
@@ -1728,13 +1728,13 @@ func findMeetingLink(text string) (string, linkResult) {
 	if !isAllowedMeetingHost(host) {
 		return "", linkNone
 	}
-	// app.zoom.us — PWA/веб-клиент Zoom, а не хост приглашения. Бот по ней не
-	// войдёт. Ссылки-приглашения всегда вида <account>.zoom.us/j/... или zoom.us/j/...
+	// app.zoom.us - the Zoom PWA/web client, not an invitation host. The bot cannot
+	// join through it. Invitation links are always <account>.zoom.us/j/... or zoom.us/j/...
 	if host == "app.zoom.us" {
 		return "", linkZoomWebApp
 	}
-	// "" — для https://zoom.us, "/" — для https://zoom.us/. Оба не валидные
-	// meeting-ссылки.
+	// "" - for https://zoom.us, "/" - for https://zoom.us/. Neither is a valid
+	// meeting link.
 	if u.Path == "" || u.Path == "/" {
 		return "", linkNone
 	}
@@ -1750,10 +1750,10 @@ func isAllowedMeetingHost(host string) bool {
 	return false
 }
 
-// normalizeTelemostHost приводит telemost.360.yandex.{ru,com} к базовому
-// telemost.yandex.{ru,com}. Яндекс 360 — суббренд, оба домена ведут в одну
-// встречу (боевой тест 2026-06-19), но провайдер принимает только базовый.
-// Принимает уже lowercase-host; второй результат — была ли нормализация.
+// normalizeTelemostHost reduces telemost.360.yandex.{ru,com} to the base
+// telemost.yandex.{ru,com}. Yandex 360 is a sub-brand, both domains lead to the same
+// meeting (live test 2026-06-19), but the provider accepts only the base one.
+// Takes an already lowercase host; the second result tells whether normalization happened.
 func normalizeTelemostHost(host string) (string, bool) {
 	const sub = "telemost.360.yandex."
 	const base = "telemost.yandex."

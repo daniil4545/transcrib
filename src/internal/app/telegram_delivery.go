@@ -9,25 +9,25 @@ import (
 	tele "gopkg.in/telebot.v4"
 )
 
-// TelegramDelivery реализует DocumentDelivery: отправляет файл документом
-// в Telegram-чат через telebot.
+// TelegramDelivery implements DocumentDelivery: it sends a file as a document
+// to a Telegram chat via telebot.
 type TelegramDelivery struct {
 	bot *tele.Bot
 }
 
-// NewTelegramDelivery создаёт TelegramDelivery поверх уже инициализированного
-// бота. Принимает *Bot, а не *tele.Bot: main.go держит именно *Bot, и внутренний
-// telebot-клиент не приходится экспортировать наружу пакета.
+// NewTelegramDelivery creates a TelegramDelivery on top of an already initialized
+// bot. It takes *Bot, not *tele.Bot: main.go holds exactly *Bot, so the internal
+// telebot client does not have to be exported outside the package.
 func NewTelegramDelivery(b *Bot) *TelegramDelivery {
 	return &TelegramDelivery{bot: b.bot}
 }
 
-// Deliver отправляет content как Document с именем filename в чат chatID.
-// caption — подпись под файлом (видна в чате); пустая строка — без подписи.
-// ctx не передаётся в telebot: библиотека сама управляет таймаутами
-// HTTP-клиента (context cancellation не поддерживается в v4 beta).
+// Deliver sends content as a Document named filename to chat chatID.
+// caption is the caption under the file (visible in the chat); an empty string means no caption.
+// ctx is not passed to telebot: the library manages the HTTP client
+// timeouts itself (context cancellation is not supported in v4 beta).
 func (d *TelegramDelivery) Deliver(_ context.Context, chatID int64, filename, caption string, content []byte) error {
-	// Индикатор «загружаю документ» — ощущение живости, пока файл готовится. Best-effort.
+	// "Uploading document" indicator: a sense of liveness while the file is being prepared. Best-effort.
 	if err := d.bot.Notify(tele.ChatID(chatID), tele.UploadingDocument); err != nil {
 		slog.Warn("chat action uploading", "err", err, "chat_id", chatID)
 	}

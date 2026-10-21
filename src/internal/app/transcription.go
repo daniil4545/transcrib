@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-// ErrEmptyTranscript означает штатный provider-done без содержательной речи.
-// Встречу нельзя считать успешно обработанной: квоту возвращаем, summary не запускаем.
+// ErrEmptyTranscript means a normal provider-done without meaningful speech.
+// The meeting cannot be considered successfully processed: we refund the quota and do not start the summary.
 var ErrEmptyTranscript = errors.New("empty transcript")
 
-// ProviderHTTPError сохраняет HTTP-код provider'а без парсинга строки ошибки.
-// Body уже усечён в provider-клиенте и не содержит API-ключей: ключи уходят в headers.
+// ProviderHTTPError keeps the provider's HTTP code without parsing the error string.
+// Body is already truncated in the provider client and contains no API keys: keys go in headers.
 type ProviderHTTPError struct {
 	Provider   string
 	Op         string
@@ -44,42 +44,42 @@ func startTimedOut(job Job, timeout time.Duration) bool {
 	return timeout > 0 && time.Since(job.CreatedAt) > timeout
 }
 
-// TranscriptionProvider — единственный интерфейс, изолирующий orchestrator от
-// поставщика транскрибации (architecture.md §8). Реализации: mock.go (скелет),
+// TranscriptionProvider is the only interface isolating the orchestrator from the
+// transcription provider (architecture.md §8). Implementations: mock.go (skeleton),
 // speech2text.go (prod/live-risk), mymeet.go (fallback).
 type TranscriptionProvider interface {
-	// Submit отправляет бота на встречу, возвращает внешний id задачи у
-	// поставщика. Принимает Job: реализация берёт MeetingURL, платформу
-	// выводит из хоста; template — из конфига, title/local_date_time
-	// генерируются из текущего времени (mymeet требует их непустыми).
+	// Submit sends the bot to a meeting and returns the provider's external task id.
+	// It takes a Job: the implementation uses MeetingURL and derives the
+	// platform from the host; template comes from config, title/local_date_time
+	// are generated from the current time (mymeet requires them non-empty).
 	Submit(ctx context.Context, job Job) (externalJobID string, err error)
-	// Poll возвращает нормализованный статус (сырые статусы поставщика
-	// маппятся внутри реализации).
+	// Poll returns the normalized status (raw provider statuses
+	// are mapped inside the implementation).
 	Poll(ctx context.Context, externalJobID string) (ProviderStatus, error)
-	// Fetch забирает готовый результат. Вызывается при StatusDone и при
-	// StatusFailed после stop-marker, когда provider уже финализировал фрагмент.
+	// Fetch picks up the finished result. Called on StatusDone and on
+	// StatusFailed after a stop marker, when the provider has already finalized the fragment.
 	Fetch(ctx context.Context, externalJobID string) (Result, error)
-	// Cancel досрочно останавливает запись у поставщика. Семантика провайдеро-зависима:
-	// s2t /stop ФИНАЛИЗИРУЕТ записанный фрагмент с транскриптом (поддержка 2026-06-17),
-	// mymeet не умеет прерывать (no-op). Для уже пишущей s2t-записи вызывающие ставят
-	// stop marker, переводят Job в processing и забирают transcript; refund остаётся
-	// только для no-result path.
-	// Best-effort: ошибка некритична — источник истины по квоте/статусу джобы в storage.
+	// Cancel stops recording at the provider early. Semantics are provider-dependent:
+	// s2t /stop FINALIZES the recorded fragment with a transcript (support, 2026-06-17),
+	// mymeet cannot interrupt (no-op). For an s2t recording already in progress, callers set a
+	// stop marker, move the Job to processing and fetch the transcript; refund remains
+	// only for the no-result path.
+	// Best-effort: an error is non-critical, the source of truth for quota/job status is storage.
 	Cancel(ctx context.Context, externalJobID string) error
 }
 
-// ProviderStatus — нормализованный статус задачи у поставщика.
+// ProviderStatus is the normalized task status at the provider.
 type ProviderStatus int
 
 const (
-	StatusPending         ProviderStatus = iota // s2t: queued/code=0 (задача создана) -> Job joining
-	StatusQueuedRecording                       // s2t: queued/code=30 "В очереди на запись" -> Job joining/recording
-	StatusJoiningCall                           // mymeet: connecting/queued; s2t: бот присоединился -> Job joining
-	StatusOnCall                                // mymeet: recording; s2t: бот ведёт запись -> Job recording
-	StatusTranscribing                          // mymeet: processing (бот вышел, фоновая обработка) -> Job processing
-	StatusDone                                  // mymeet: new/processed (new=готово, LIVE); s2t: done (code 200/204)
+	StatusPending         ProviderStatus = iota // s2t: queued/code=0 (task created) -> Job joining
+	StatusQueuedRecording                       // s2t: queued/code=30 "В очереди на запись" (queued for recording) -> Job joining/recording
+	StatusJoiningCall                           // mymeet: connecting/queued; s2t: bot joined -> Job joining
+	StatusOnCall                                // mymeet: recording; s2t: bot is recording -> Job recording
+	StatusTranscribing                          // mymeet: processing (bot left, background processing) -> Job processing
+	StatusDone                                  // mymeet: new/processed (new = ready, LIVE); s2t: done (code 200/204)
 	StatusFailed                                // mymeet: failed; s2t: error/cancelled
-	StatusPaused                                // s2t: paused (нехватка минут на счёте); у mymeet не бывает
+	StatusPaused                                // s2t: paused (not enough minutes on the account); mymeet never has it
 )
 
 func (s ProviderStatus) String() string {
@@ -105,20 +105,20 @@ func (s ProviderStatus) String() string {
 	}
 }
 
-// Result — готовый результат обработки встречи.
+// Result is the finished meeting processing result.
 type Result struct {
-	// TranscriptMarkdown — готовый транскрипт по спикерам (s2t result/txt),
-	// доставляется юзеру как есть.
+	// TranscriptMarkdown is the finished transcript by speaker (s2t result/txt),
+	// delivered to the user as is.
 	TranscriptMarkdown string
-	// SummaryMarkdown — готовое саммари ОТ поставщика (mymeet считает его при
-	// обработке встречи). Пустая строка = «провайдер саммари не дал — обрабатывай
-	// через Summarizer как раньше» (s2t-путь).
+	// SummaryMarkdown is the finished summary FROM the provider (mymeet computes it while
+	// processing the meeting). An empty string = "the provider gave no summary: process
+	// via Summarizer as before" (s2t path).
 	SummaryMarkdown string
-	// Raw — сырой JSON-ответ поставщика (s2t result/json), сохраняется в
-	// jobs.raw_provider_response. Колонка JSONB: значение обязано быть
-	// валидным JSON, plain text туда не вставится.
+	// Raw is the provider's raw JSON response (s2t result/json), stored in
+	// jobs.raw_provider_response. The column is JSONB: the value must be
+	// valid JSON, plain text cannot be inserted.
 	Raw []byte
-	// DurationSeconds — фактическая длительность результата от provider.
-	// 0 = unknown/unavailable; billing fallback живёт выше, не в provider.
+	// DurationSeconds is the actual result duration from the provider.
+	// 0 = unknown/unavailable; the billing fallback lives above, not in the provider.
 	DurationSeconds int
 }

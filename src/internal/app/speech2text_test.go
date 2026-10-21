@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// TestMeetingAccessCode — пароль Zoom из ?pwd= уходит отдельным полем access_code
-// (ответ поддержки s2t 2026-06-11), остальные ссылки кода не имеют.
+// TestMeetingAccessCode: the Zoom password from ?pwd= is sent as a separate access_code
+// field (s2t support reply, 2026-06-11); other links have no code.
 func TestMeetingAccessCode(t *testing.T) {
 	tests := []struct {
 		url  string
@@ -24,16 +24,17 @@ func TestMeetingAccessCode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		if got := meetingAccessCode(tt.url); got != tt.want {
-			t.Errorf("meetingAccessCode(%q) = %q, ожидали %q", tt.url, got, tt.want)
+			t.Errorf("meetingAccessCode(%q) = %q, want %q", tt.url, got, tt.want)
 		}
 	}
 }
 
-// TestMeetingAccessCode_AfterFindMeetingLink — стык двух функций: findMeetingLink
-// жадным \S+ цепляет хвостовую пунктуацию и срезает её (TrimRight), а meetingAccessCode
-// читает pwd из уже очищенного URL. Без среза мусорный хвост (`!`, `)`) утёк бы в
-// access_code и сломал бы пароль на стороне s2t. Тест бьёт по обеим вместе:
-// фраза с хвостом -> findMeetingLink -> meetingAccessCode -> чистый код.
+// TestMeetingAccessCode_AfterFindMeetingLink covers the seam of two functions:
+// findMeetingLink grabs trailing punctuation with a greedy \S+ and trims it (TrimRight),
+// while meetingAccessCode reads pwd from the already cleaned URL. Without the trim, a
+// junk tail (`!`, `)`) would leak into access_code and break the password on the s2t
+// side. The test exercises both together:
+// phrase with a tail -> findMeetingLink -> meetingAccessCode -> clean code.
 func TestMeetingAccessCode_AfterFindMeetingLink(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -41,12 +42,12 @@ func TestMeetingAccessCode_AfterFindMeetingLink(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "хвостовой восклицательный знак",
+			name:   "trailing exclamation mark",
 			phrase: "залетай https://us05web.zoom.us/j/89978292641?pwd=s7PI9sJOiQX3gajkalJI4J6jQMeE38.1! жду",
 			want:   "s7PI9sJOiQX3gajkalJI4J6jQMeE38.1",
 		},
 		{
-			name:   "ссылка в скобках",
+			name:   "link in parentheses",
 			phrase: "встреча (https://us05web.zoom.us/j/123?pwd=abcDEF)",
 			want:   "abcDEF",
 		},
@@ -55,19 +56,19 @@ func TestMeetingAccessCode_AfterFindMeetingLink(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			link, res := findMeetingLink(tt.phrase)
 			if res != linkValid {
-				t.Fatalf("findMeetingLink(%q) не нашла ссылку", tt.phrase)
+				t.Fatalf("findMeetingLink(%q) found no link", tt.phrase)
 			}
 			if got := meetingAccessCode(link); got != tt.want {
-				t.Errorf("meetingAccessCode после findMeetingLink = %q, ожидали %q (мусорный хвост не срезан?)", got, tt.want)
+				t.Errorf("meetingAccessCode after findMeetingLink = %q, want %q (junk tail not trimmed?)", got, tt.want)
 			}
 		})
 	}
 }
 
-// TestMapS2TStatus фиксирует контракт маппинга статусов s2t (API.md §2.5/§9)
-// от дрейфа при будущих правках. Чистая функция — табличный тест.
+// TestMapS2TStatus pins the s2t status mapping contract (API.md §2.5/§9)
+// against drift in future edits. Pure function, so a table test.
 func TestMapS2TStatus(t *testing.T) {
-	// Успешные кейсы: маппинг известного статуса в конкретный ProviderStatus.
+	// Success cases: a known status maps to a specific ProviderStatus.
 	ok := []struct {
 		value       string
 		code        int
@@ -80,7 +81,7 @@ func TestMapS2TStatus(t *testing.T) {
 		{"queued", 30, "Бот ведёт запись встречи", StatusOnCall},
 		{"queued", 30, "Бот ведет запись встречи", StatusOnCall},
 		{"done", 200, "", StatusDone},
-		{"done", 204, "", StatusDone}, // речь не обнаружена — Done, пустоту разрулит Fetch
+		{"done", 204, "", StatusDone}, // no speech detected: Done, Fetch handles the empty result
 		{"error", 404, "", StatusFailed},
 		{"error", 502, "", StatusFailed},
 		{"cancelled", 0, "", StatusFailed},
@@ -89,29 +90,29 @@ func TestMapS2TStatus(t *testing.T) {
 	for _, tt := range ok {
 		got, err := mapS2TStatus(tt.value, tt.code, tt.description)
 		if err != nil {
-			t.Errorf("mapS2TStatus(%q, %d): неожиданная ошибка %v", tt.value, tt.code, err)
+			t.Errorf("mapS2TStatus(%q, %d): unexpected error %v", tt.value, tt.code, err)
 		}
 		if got != tt.want {
-			t.Errorf("mapS2TStatus(%q, %d) = %d, ожидали %d", tt.value, tt.code, got, tt.want)
+			t.Errorf("mapS2TStatus(%q, %d) = %d, want %d", tt.value, tt.code, got, tt.want)
 		}
 	}
 
-	// Ошибочные кейсы (дрейф контракта): фиксируем только факт ошибки, не статус —
-	// возвращаемый статус при err != nil деталь реализации, привязка к нему дала бы
-	// ложное падение при безобидном рефакторинге.
+	// Error cases (contract drift): assert only that an error occurs, not the status:
+	// the returned status with err != nil is an implementation detail, and binding to it
+	// would cause a false failure on a harmless refactoring.
 	bad := []struct {
 		value       string
 		code        int
 		description string
 	}{
-		{"shiny-new-status", 0, ""},           // неизвестный статус — ошибка, не молчаливый Pending
-		{"queued", 99, ""},                    // неизвестный queued-код — ошибка, чтобы не показать ложную запись
-		{"queued", 30, "Новый текст статуса"}, // неизвестный code=30 description — ошибка, чтобы не показать ложную запись
+		{"shiny-new-status", 0, ""},           // unknown status: an error, not a silent Pending
+		{"queued", 99, ""},                    // unknown queued code: an error, to avoid showing a false recording
+		{"queued", 30, "Новый текст статуса"}, // unknown code=30 description: an error, to avoid showing a false recording
 		{"", 0, ""},
 	}
 	for _, tt := range bad {
 		if _, err := mapS2TStatus(tt.value, tt.code, tt.description); err == nil {
-			t.Errorf("mapS2TStatus(%q, %d): ожидали ошибку дрейфа контракта, получили nil", tt.value, tt.code)
+			t.Errorf("mapS2TStatus(%q, %d): want a contract drift error, got nil", tt.value, tt.code)
 		}
 	}
 }
@@ -120,7 +121,7 @@ func TestSpeech2TextFetch_EmptyTranscript(t *testing.T) {
 	prov := NewSpeech2Text("test-key", "https://speech2text.test")
 	prov.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path != "/api/recognitions/ext-empty/result/txt" {
-			t.Fatalf("неожиданный путь %s", r.URL.Path)
+			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		return &http.Response{
 			StatusCode: http.StatusNoContent,
@@ -132,7 +133,7 @@ func TestSpeech2TextFetch_EmptyTranscript(t *testing.T) {
 
 	_, err := prov.Fetch(context.Background(), "ext-empty")
 	if !errors.Is(err, ErrEmptyTranscript) {
-		t.Fatalf("Fetch empty transcript err = %v, ожидали ErrEmptyTranscript", err)
+		t.Fatalf("Fetch empty transcript err = %v, want ErrEmptyTranscript", err)
 	}
 }
 
@@ -181,7 +182,7 @@ func TestS2TDurationSeconds(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := s2tDurationSeconds([]byte(tt.raw)); got != tt.want {
-				t.Errorf("s2tDurationSeconds() = %d, ожидали %d", got, tt.want)
+				t.Errorf("s2tDurationSeconds() = %d, want %d", got, tt.want)
 			}
 		})
 	}
@@ -197,7 +198,7 @@ func TestSpeech2TextFetch_DurationSeconds(t *testing.T) {
 		case "/api/recognitions/ext-duration/result/json":
 			body = `{"chunks":[{"time":{"from":0,"to":59.9}},{"time":{"from":60,"to":121.4}}]}`
 		default:
-			t.Fatalf("неожиданный путь %s", r.URL.Path)
+			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -212,6 +213,6 @@ func TestSpeech2TextFetch_DurationSeconds(t *testing.T) {
 		t.Fatalf("Fetch: %v", err)
 	}
 	if res.DurationSeconds != 121 {
-		t.Errorf("DurationSeconds = %d, ожидали 121", res.DurationSeconds)
+		t.Errorf("DurationSeconds = %d, want 121", res.DurationSeconds)
 	}
 }

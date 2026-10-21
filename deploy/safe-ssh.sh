@@ -351,9 +351,10 @@ case "$action" in
         remote="postgres=\$(docker ps -q --filter 'label=coolify.resourceName=transcrib-prod' --filter 'label=com.docker.compose.service=postgres' | head -1); test -n \"\$postgres\" || { echo 'Coolify prod postgres container not found' >&2; exit 1; }; docker exec \"\$postgres\" psql -X -U transcrib -d transcrib -c \"SELECT 'users' AS t, count(*) AS rows, max(created_at) AS newest FROM users UNION ALL SELECT 'jobs', count(*), max(created_at) FROM jobs UNION ALL SELECT 'payments', count(*), max(created_at) FROM payments UNION ALL SELECT 'subscriptions', count(*), max(paid_at) FROM subscriptions UNION ALL SELECT 'refunds', count(*), max(created_at) FROM refunds UNION ALL SELECT 'analytics_events', count(*), max(occurred_at) FROM analytics_events ORDER BY 1;\""
         ;;
     coolify-prod-shutdown-notice)
-        # Разовая рассылка о закрытии бота активным за 30 дней и держателям подписки.
-        # Токен берётся из env контейнера app и не печатается; chat_id тоже.
-        # Адрес Telegram прибит к IP так же, как extra_hosts в Compose.
+        # One-time broadcast about the bot shutdown to users active in the last 30 days and to
+        # subscription holders. The user-facing notice text below stays in Russian on purpose.
+        # The token is taken from the app container env and is not printed; neither is chat_id.
+        # The Telegram address is pinned to an IP the same way as extra_hosts in Compose.
         [[ "$arg" == dry-run || "$arg" == send ]] || { echo "mode must be dry-run or send" >&2; exit 2; }
         notice="Здравствуйте! Бот «transcrib» прекращает работу: новые встречи и оплаты больше не принимаются, автопродление отключено.
 
@@ -386,8 +387,8 @@ case "$action" in
         remote="printf 'unit\n'; systemctl is-enabled mihomo.service 2>/dev/null || true; systemctl is-active mihomo.service 2>/dev/null || true; systemctl show mihomo.service -p LoadState -p ActiveState -p SubState -p UnitFileState -p ExecMainPID --no-pager 2>/dev/null || true; echo; printf 'listeners\n'; ss -tlnp | grep -E ':20170|:20171|:9090' || true; echo; printf 'ufw\n'; ufw status verbose 2>/dev/null | grep -E '20170|20171|Status|Default' || true; echo; printf 'public_20171\n'; curl --noproxy '*' -I --max-time 5 http://203.0.113.10:20171/ 2>&1 | sed -n '1,8p'"
         ;;
     mihomo-nodes)
-        # Агрегат по нодам подписки с контроллера: сколько живых, что выбрано в
-        # ключевых группах. Имена нод не печатаем (deploy/logs.md).
+        # Aggregate over the subscription nodes from the controller: how many are alive, what is
+        # selected in the key groups. Node names are not printed (deploy/logs.md).
         remote="curl -s -m 10 http://127.0.0.1:9090/proxies | python3 -c \"import sys,json
 d=json.load(sys.stdin)['proxies']
 nodes=[p for p in d.values() if p.get('type') in ('Vless','Vmess','Trojan','Shadowsocks','Hysteria2','Ss','Tuic')]
@@ -404,8 +405,8 @@ for g in ('AI','Auto-Best','Fallback-Stable','Manual','Telegram'):
 \""
         ;;
     mihomo-routing)
-        # Конфиг печатается с маскировкой credential-полей: маршрутизацию видно,
-        # subscription-ссылка и ключи нод наружу не идут (deploy/logs.md).
+        # The config is printed with credential fields masked: routing is visible, the
+        # subscription link and node keys do not go out (deploy/logs.md).
         remote="cfg=''; for p in /etc/mihomo/config.yaml /etc/mihomo/config.yml /root/.config/mihomo/config.yaml /opt/mihomo/config.yaml; do test -f \"\$p\" && { cfg=\"\$p\"; break; }; done; test -n \"\$cfg\" || { echo 'mihomo config not found' >&2; exit 1; }; printf 'config_path=%s\n' \"\$cfg\"; printf 'config_lines=%s\n' \"\$(wc -l < \"\$cfg\")\"; echo; sed -E 's/((password|uuid|token|secret|auth-str|api-key|username|url|path)[[:space:]]*:[[:space:]]*).*/\1***/I' \"\$cfg\" | head -300"
         ;;
     mihomo-logs)
@@ -499,9 +500,9 @@ for g in ('AI','Auto-Best','Fallback-Stable','Manual','Telegram'):
         ;;
 esac
 
-# Проверяем именно отпечаток: любая загруженная личность агента раньше проходила
-# эту проверку, и после снятия старых ключей это давало Permission denied вместо
-# понятной ошибки.
+# Check the fingerprint specifically: any identity loaded into the agent used to pass
+# this check, and after the old keys were removed that gave Permission denied instead of
+# a clear error.
 deploy_key_fp="SHA256:PlUcGZ4y2NsdM97PXCvYH1Uz006KxeD2xULAl1rI4IE"
 
 if ! ssh-add -l 2>/dev/null | grep -qF "$deploy_key_fp"; then

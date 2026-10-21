@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-// TestOpenRouter_Live — живой вызов реального OpenRouter. Build-тег `live`: обычный
-// go test его НЕ запускает (платный API не дёргается на каждом прогоне). Ключ/модель —
-// из окружения (make грузит .env). Запуск: `make live-summary`.
+// TestOpenRouter_Live is a live call to the real OpenRouter. Build tag `live`: plain
+// go test does NOT run it (the paid API is not hit on every run). Key and model come
+// from the environment (make loads .env). Run: `make live-summary`.
 func TestOpenRouter_Live(t *testing.T) {
 	key := os.Getenv("OPENROUTER_API_KEY")
 	if key == "" {

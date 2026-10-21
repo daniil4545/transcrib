@@ -87,7 +87,7 @@ func TestFindMeetingLink(t *testing.T) {
 		{"google meet", "https://meet.google.com/abc-defg-hij", "https://meet.google.com/abc-defg-hij", linkValid},
 		{"telemost ru", "https://telemost.yandex.ru/j/42", "https://telemost.yandex.ru/j/42", linkValid},
 		{"telemost com", "https://telemost.yandex.com/j/42", "https://telemost.yandex.com/j/42", linkValid},
-		// Яндекс 360-домен нормализуется к базовому (боевой тест 2026-06-19).
+		// A Yandex 360 domain is normalized to the base one (live test 2026-06-19).
 		{"telemost 360 ru normalized", "https://telemost.360.yandex.ru/j/42", "https://telemost.yandex.ru/j/42", linkValid},
 		{"telemost 360 com normalized", "https://telemost.360.yandex.com/j/42", "https://telemost.yandex.com/j/42", linkValid},
 		{"telemost 360 mixed case", "https://Telemost.360.Yandex.RU/j/42", "https://telemost.yandex.ru/j/42", linkValid},
@@ -97,11 +97,11 @@ func TestFindMeetingLink(t *testing.T) {
 		{"trailing punct in sentence", "Подключайся: https://zoom.us/j/1!", "https://zoom.us/j/1", linkValid},
 		{"uppercase host accepted", "HTTPS://Zoom.US/j/1", "HTTPS://Zoom.US/j/1", linkValid},
 		{"host with port accepted", "https://zoom.us:443/j/1", "https://zoom.us:443/j/1", linkValid},
-		// Zoom веб-клиент (app.zoom.us) — отдельный исход с подсказкой (живой тест 2026-06-15).
+		// Zoom web client (app.zoom.us): a separate outcome with a hint (live test 2026-06-15).
 		{"zoom web client start", "https://app.zoom.us/wc/86144204796/start?fromPWA=1&pwd=abc", "", linkZoomWebApp},
 		{"zoom web client join", "https://app.zoom.us/wc/123/join", "", linkZoomWebApp},
 		{"zoom web client uppercase", "https://App.Zoom.US/wc/1/start", "", linkZoomWebApp},
-		// Отвергаются как «нет ссылки».
+		// Rejected as "no link".
 		{"schemeless rejected", "zoom.us/j/1", "", linkNone},
 		{"root page rejected", "https://telemost.yandex.ru/", "", linkNone},
 		{"bare domain rejected", "https://zoom.us", "", linkNone},
@@ -136,16 +136,16 @@ func TestMSKTimeAndFilenames(t *testing.T) {
 	createdAt := time.Date(2026, 6, 24, 1, 39, 0, 0, time.UTC)
 
 	if got, want := formatCallTime(createdAt), "24.06.2026 04:39"; got != want {
-		t.Errorf("formatCallTime = %q, ожидали %q", got, want)
+		t.Errorf("formatCallTime = %q, want %q", got, want)
 	}
 	if got, want := formatCallShortTime(createdAt), "24.06 04:39"; got != want {
-		t.Errorf("formatCallShortTime = %q, ожидали %q", got, want)
+		t.Errorf("formatCallShortTime = %q, want %q", got, want)
 	}
 	if got, want := transcriptFilename(createdAt), "transcript_20260624_0439.md"; got != want {
-		t.Errorf("transcriptFilename = %q, ожидали %q", got, want)
+		t.Errorf("transcriptFilename = %q, want %q", got, want)
 	}
 	if got, want := summaryFilename(createdAt), "summary_20260624_0439.md"; got != want {
-		t.Errorf("summaryFilename = %q, ожидали %q", got, want)
+		t.Errorf("summaryFilename = %q, want %q", got, want)
 	}
 }
 
@@ -169,7 +169,7 @@ func TestValidPaymentEmail(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := validPaymentEmail(c.email); got != c.want {
-			t.Errorf("validPaymentEmail(%q) = %v, ожидали %v", c.email, got, c.want)
+			t.Errorf("validPaymentEmail(%q) = %v, want %v", c.email, got, c.want)
 		}
 	}
 }
@@ -191,7 +191,7 @@ func TestFormatMinutesBalance(t *testing.T) {
 	}
 	for _, tc := range cases {
 		if got := formatMinutesBalance(tc.minutes); got != tc.want {
-			t.Errorf("formatMinutesBalance(%d) = %q, ожидали %q", tc.minutes, got, tc.want)
+			t.Errorf("formatMinutesBalance(%d) = %q, want %q", tc.minutes, got, tc.want)
 		}
 	}
 }
@@ -216,17 +216,17 @@ func TestOnPaySubscription_RequestsEmailWhenMissing(t *testing.T) {
 		t.Fatalf("onPaySubscription: %v", err)
 	}
 	if c.responded != 1 {
-		t.Fatalf("Respond вызван %d раз, ожидали 1", c.responded)
+		t.Fatalf("Respond called %d times, want 1", c.responded)
 	}
 	if len(c.sent) != 1 || c.sent[0] != b.texts.payEmailRequest {
-		t.Fatalf("sent = %#v, ожидали запрос email", c.sent)
+		t.Fatalf("sent = %#v, want an email request", c.sent)
 	}
 	waiting, autoRenew := b.takePaymentEmailWait(userID)
 	if !waiting {
-		t.Fatalf("ожидание email для оплаты не установлено")
+		t.Fatalf("payment email wait is not set")
 	}
 	if !autoRenew {
-		t.Fatalf("autoRenew=false, ожидали default-on true")
+		t.Fatalf("autoRenew=false, want default-on true")
 	}
 }
 
@@ -267,10 +267,10 @@ func TestOnText_PaymentEmailCreatesPaymentLink(t *testing.T) {
 		}
 		gotEmail = body.Receipt.Customer.Email
 		if body.SavePaymentMethod != "true" {
-			t.Fatalf("save_payment_method = %q, ожидали true", body.SavePaymentMethod)
+			t.Fatalf("save_payment_method = %q, want true", body.SavePaymentMethod)
 		}
 		if body.Metadata.UserID == "" || body.Metadata.AutoRenew != "true" {
-			t.Fatalf("metadata = %#v, ожидали user_id и auto_renew", body.Metadata)
+			t.Fatalf("metadata = %#v, want user_id and auto_renew", body.Metadata)
 		}
 
 		w := httptest.NewRecorder()
@@ -302,38 +302,38 @@ func TestOnText_PaymentEmailCreatesPaymentLink(t *testing.T) {
 		t.Fatalf("onText: %v", err)
 	}
 	if gotEmail != "user@example.com" {
-		t.Fatalf("YooKassa receipt email = %q, ожидали user@example.com", gotEmail)
+		t.Fatalf("YooKassa receipt email = %q, want user@example.com", gotEmail)
 	}
 	email, err := s.PaymentEmail(context.Background(), userID)
 	if err != nil {
 		t.Fatalf("PaymentEmail: %v", err)
 	}
 	if email != "user@example.com" {
-		t.Fatalf("saved email = %q, ожидали user@example.com", email)
+		t.Fatalf("saved email = %q, want user@example.com", email)
 	}
 
 	rows := paymentRows(t, s, userID)
 	if len(rows) != 1 {
-		t.Fatalf("payments len = %d, ожидали 1", len(rows))
+		t.Fatalf("payments len = %d, want 1", len(rows))
 	}
 	if rows[0].status != string(PaymentPending) {
-		t.Fatalf("payment status = %q, ожидали pending", rows[0].status)
+		t.Fatalf("payment status = %q, want pending", rows[0].status)
 	}
 	if len(c.sent) != 1 {
-		t.Fatalf("Send вызван %d раз, ожидали 1", len(c.sent))
+		t.Fatalf("Send called %d times, want 1", len(c.sent))
 	}
 	if c.sent[0] != b.texts.payLinkReady {
-		t.Fatalf("payment text = %#v, ожидали payLinkReady", c.sent[0])
+		t.Fatalf("payment text = %#v, want payLinkReady", c.sent[0])
 	}
 	if len(c.sentOpts) != 1 || len(c.sentOpts[0]) != 1 {
-		t.Fatalf("Send opts = %#v, ожидали markup", c.sentOpts)
+		t.Fatalf("Send opts = %#v, want markup", c.sentOpts)
 	}
 	markup, ok := c.sentOpts[0][0].(*tele.ReplyMarkup)
 	if !ok {
-		t.Fatalf("Send opt = %T, ожидали *tele.ReplyMarkup", c.sentOpts[0][0])
+		t.Fatalf("Send opt = %T, want *tele.ReplyMarkup", c.sentOpts[0][0])
 	}
 	if !hasInlineURL(markup, b.texts.payOpenButton, "https://yookassa.test/confirm/pay-link-1") {
-		t.Fatalf("кнопка оплаты со ссылкой ЮKassa не найдена")
+		t.Fatalf("payment button with the YooKassa link not found")
 	}
 }
 
@@ -357,7 +357,7 @@ func TestBalance_UsesMinutes(t *testing.T) {
 		t.Fatalf("trial Balance: %v", err)
 	}
 	if bal.IsSubscription || bal.Remaining != 37 || bal.Limit != 180 {
-		t.Fatalf("trial balance = %+v, ожидали 37/180 минут без подписки", bal)
+		t.Fatalf("trial balance = %+v, want 37/180 minutes without a subscription", bal)
 	}
 
 	_, err = s.pool.Exec(ctx,
@@ -375,7 +375,7 @@ func TestBalance_UsesMinutes(t *testing.T) {
 		t.Fatalf("subscription Balance: %v", err)
 	}
 	if !bal.IsSubscription || bal.Remaining != 37 || bal.Limit != 900 {
-		t.Fatalf("subscription balance = %+v, ожидали 37/900 минут из minutes_balance", bal)
+		t.Fatalf("subscription balance = %+v, want 37/900 minutes from minutes_balance", bal)
 	}
 }
 
@@ -400,7 +400,7 @@ func TestBalance_ActiveSubscriptionWithZeroMinutesStaysSubscription(t *testing.T
 		t.Fatalf("Balance: %v", err)
 	}
 	if !bal.IsSubscription || bal.Remaining != 0 || bal.Limit != 900 || bal.ExpiresAt == nil {
-		t.Fatalf("balance = %+v, ожидали активную подписку 0/900", bal)
+		t.Fatalf("balance = %+v, want an active subscription 0/900", bal)
 	}
 }
 
@@ -430,24 +430,24 @@ func TestOnBalance_ShowsRecurringStatus(t *testing.T) {
 		t.Fatalf("onBalance: %v", err)
 	}
 	if len(c.sent) != 1 {
-		t.Fatalf("Send вызван %d раз, ожидали 1", len(c.sent))
+		t.Fatalf("Send called %d times, want 1", len(c.sent))
 	}
 	text, ok := c.sent[0].(string)
 	if !ok {
-		t.Fatalf("Send получил %T, ожидали string", c.sent[0])
+		t.Fatalf("Send got %T, want string", c.sent[0])
 	}
 	if !strings.Contains(text, "Автопродление: включено") || !strings.Contains(text, "01.08.2026") {
-		t.Fatalf("balance text = %q, ожидали статус автопродления", text)
+		t.Fatalf("balance text = %q, want the auto-renewal status", text)
 	}
 	if len(c.sentOpts) != 1 || len(c.sentOpts[0]) != 1 {
-		t.Fatalf("Send opts = %#v, ожидали кнопку отключения", c.sentOpts)
+		t.Fatalf("Send opts = %#v, want the disable button", c.sentOpts)
 	}
 	markup, ok := c.sentOpts[0][0].(*tele.ReplyMarkup)
 	if !ok {
-		t.Fatalf("Send opt = %T, ожидали *tele.ReplyMarkup", c.sentOpts[0][0])
+		t.Fatalf("Send opt = %T, want *tele.ReplyMarkup", c.sentOpts[0][0])
 	}
 	if !hasInlineButton(markup, "Отключить автопродление") {
-		t.Fatalf("кнопка отключения автопродления не найдена")
+		t.Fatalf("auto-renewal disable button not found")
 	}
 }
 
@@ -488,17 +488,17 @@ func TestOnBalance_RecurringDisabledFlagDoesNotPromiseNextCharge(t *testing.T) {
 	}
 	text, ok := c.sent[0].(string)
 	if !ok {
-		t.Fatalf("Send получил %T, ожидали string", c.sent[0])
+		t.Fatalf("Send got %T, want string", c.sent[0])
 	}
 	if !strings.Contains(text, "Автопродление сейчас выключено.") || strings.Contains(text, "Следующее списание") {
-		t.Fatalf("balance text = %q, ожидали нейтральный recurring status без следующего списания", text)
+		t.Fatalf("balance text = %q, want a neutral recurring status without the next charge", text)
 	}
 	markup, ok := c.sentOpts[0][0].(*tele.ReplyMarkup)
 	if !ok {
-		t.Fatalf("Send opt = %T, ожидали *tele.ReplyMarkup", c.sentOpts[0][0])
+		t.Fatalf("Send opt = %T, want *tele.ReplyMarkup", c.sentOpts[0][0])
 	}
 	if !hasInlineButton(markup, "Отключить автопродление") || !hasInlineButton(markup, "Обновить подписку") {
-		t.Fatalf("markup = %#v, ожидали disable и renew controls", markup.InlineKeyboard)
+		t.Fatalf("markup = %#v, want disable and renew controls", markup.InlineKeyboard)
 	}
 }
 
@@ -523,10 +523,10 @@ func TestOnBalance_TrialShowsPaymentAndDisableControls(t *testing.T) {
 	}
 	markup, ok := c.sentOpts[0][0].(*tele.ReplyMarkup)
 	if !ok {
-		t.Fatalf("Send opt = %T, ожидали *tele.ReplyMarkup", c.sentOpts[0][0])
+		t.Fatalf("Send opt = %T, want *tele.ReplyMarkup", c.sentOpts[0][0])
 	}
 	if !hasInlineButton(markup, "Отключить автопродление") || !hasInlineButton(markup, "Оформить подписку") || hasInlineButton(markup, "Обновить подписку") {
-		t.Fatalf("markup = %#v, ожидали disable и payment controls для trial", markup.InlineKeyboard)
+		t.Fatalf("markup = %#v, want disable and payment controls for trial", markup.InlineKeyboard)
 	}
 }
 
@@ -550,11 +550,11 @@ func TestOnPayAutoRenew_DisabledFlagDoesNotStartOneTimePayment(t *testing.T) {
 		t.Fatalf("onPayAutoRenew: %v", err)
 	}
 	if len(c.sent) != 1 || c.sent[0] != b.texts.autoRenewUnavailable {
-		t.Fatalf("sent = %#v, ожидали unavailable text", c.sent)
+		t.Fatalf("sent = %#v, want unavailable text", c.sent)
 	}
 	waiting, _ := b.takePaymentEmailWait(userID)
 	if waiting {
-		t.Fatalf("legacy pay_auto_renew начал payment flow при выключенном recurring")
+		t.Fatalf("legacy pay_auto_renew started the payment flow while recurring is disabled")
 	}
 }
 
@@ -571,7 +571,7 @@ func TestOnDisableAutoRenew_DisablesProfile(t *testing.T) {
 		t.Fatalf("onDisableAutoRenew: %v", err)
 	}
 	if len(c.sent) != 1 || c.sent[0] != b.texts.autoRenewDisabled {
-		t.Fatalf("sent = %#v, ожидали подтверждение отключения", c.sent)
+		t.Fatalf("sent = %#v, want a disable confirmation", c.sent)
 	}
 	profile, ok, err := s.RecurringProfile(context.Background(), userID)
 	if err != nil {
@@ -581,7 +581,7 @@ func TestOnDisableAutoRenew_DisablesProfile(t *testing.T) {
 		t.Fatalf("recurring profile not found")
 	}
 	if profile.Status != "disabled" || profile.DisabledAt == nil {
-		t.Fatalf("profile = %+v, ожидали disabled с disabled_at", profile)
+		t.Fatalf("profile = %+v, want disabled with disabled_at", profile)
 	}
 }
 
@@ -603,7 +603,7 @@ func TestRenderCallCard_ShowsSummaryButtonFromCache(t *testing.T) {
 	}
 
 	if !hasInlineButton(markup, "📝 Получить конспект") {
-		t.Fatalf("кнопка конспекта не найдена в карточке done-джобы с summary_md")
+		t.Fatalf("summary button not found in the card of a done job with summary_md")
 	}
 }
 
@@ -622,13 +622,13 @@ func TestRenderCallCard_FailedSummaryShowsSummaryButton(t *testing.T) {
 	}
 
 	if !strings.Contains(text, "расшифровка готова") {
-		t.Fatalf("карточка failed_summary не объясняет частичный успех: %q", text)
+		t.Fatalf("failed_summary card does not explain the partial success: %q", text)
 	}
 	if !hasInlineButton(markup, "📄 Получить транскрипт") {
-		t.Fatalf("кнопка транскрипта не найдена в карточке failed_summary")
+		t.Fatalf("transcript button not found in the failed_summary card")
 	}
 	if !hasInlineButton(markup, "📝 Получить конспект") {
-		t.Fatalf("кнопка конспекта не найдена в карточке failed_summary")
+		t.Fatalf("summary button not found in the failed_summary card")
 	}
 }
 
@@ -647,7 +647,7 @@ func TestRenderCallCard_DoneWithoutSummaryShowsSummaryButton(t *testing.T) {
 	}
 
 	if !hasInlineButton(markup, "📝 Получить конспект") {
-		t.Fatalf("кнопка конспекта не найдена в карточке done-джобы без summary_md")
+		t.Fatalf("summary button not found in the card of a done job without summary_md")
 	}
 }
 
@@ -665,7 +665,7 @@ func TestRenderCallCard_StopActionsByPhase(t *testing.T) {
 		t.Fatalf("render created: %v", err)
 	}
 	if !hasInlineButton(markup, "✖ Отменить") {
-		t.Fatalf("created карточка должна показывать отмену")
+		t.Fatalf("created card must show cancel")
 	}
 
 	recording, err := s.CreateJob(context.Background(), userID, "https://meet.google.com/card-recording", "mock", 180)
@@ -683,10 +683,10 @@ func TestRenderCallCard_StopActionsByPhase(t *testing.T) {
 		t.Fatalf("render recording: %v", err)
 	}
 	if !hasInlineButton(markup, "⏹ Остановить запись") {
-		t.Fatalf("recording карточка должна показывать stop")
+		t.Fatalf("recording card must show stop")
 	}
 	if hasInlineButton(markup, "✖ Отменить") {
-		t.Fatalf("recording карточка не должна показывать старую отмену")
+		t.Fatalf("recording card must not show the old cancel")
 	}
 
 	if _, err := s.SetJobProcessing(context.Background(), recording.ID); err != nil {
@@ -697,7 +697,7 @@ func TestRenderCallCard_StopActionsByPhase(t *testing.T) {
 		t.Fatalf("render processing: %v", err)
 	}
 	if hasInlineButton(markup, "⏹ Остановить запись") || hasInlineButton(markup, "✖ Отменить") {
-		t.Fatalf("processing карточка не должна показывать stop/cancel")
+		t.Fatalf("processing card must not show stop/cancel")
 	}
 
 	if err := s.SetJobSummarizing(context.Background(), recording.ID, []byte(`{"ok":true}`), 60); err != nil {
@@ -708,7 +708,7 @@ func TestRenderCallCard_StopActionsByPhase(t *testing.T) {
 		t.Fatalf("render summarizing: %v", err)
 	}
 	if hasInlineButton(markup, "⏹ Остановить запись") || hasInlineButton(markup, "✖ Отменить") {
-		t.Fatalf("summarizing карточка не должна показывать stop/cancel")
+		t.Fatalf("summarizing card must not show stop/cancel")
 	}
 }
 
@@ -742,20 +742,20 @@ func TestOnCancelJob_RecordingStopsAndKeepsReserve(t *testing.T) {
 	}
 
 	if c.responded != 1 {
-		t.Fatalf("responded = %d, ожидали 1", c.responded)
+		t.Fatalf("responded = %d, want 1", c.responded)
 	}
 	if len(provider.Cancelled) != 1 || provider.Cancelled[0] != "ext-callback-stop" {
-		t.Fatalf("provider.Cancelled = %v, ожидали [ext-callback-stop]", provider.Cancelled)
+		t.Fatalf("provider.Cancelled = %v, want [ext-callback-stop]", provider.Cancelled)
 	}
 	reloaded := reloadJob(t, s, job.ID)
 	if reloaded.Status != JobProcessing {
-		t.Fatalf("status = %q, ожидали processing", reloaded.Status)
+		t.Fatalf("status = %q, want processing", reloaded.Status)
 	}
 	if reloaded.LastError == nil || *reloaded.LastError != jobStopManual {
-		t.Fatalf("last_error = %v, ожидали %q", reloaded.LastError, jobStopManual)
+		t.Fatalf("last_error = %v, want %q", reloaded.LastError, jobStopManual)
 	}
 	if used := trialUsed(t, s, userID); used != usedBefore {
-		t.Fatalf("trial_used = %d, ожидали %d (без немедленного refund)", used, usedBefore)
+		t.Fatalf("trial_used = %d, want %d (no immediate refund)", used, usedBefore)
 	}
 }
 
@@ -788,13 +788,13 @@ func TestOnCancelJob_RecordingStopErrorRefunds(t *testing.T) {
 	}
 
 	if len(provider.Cancelled) != 1 || provider.Cancelled[0] != "ext-callback-stop-error" {
-		t.Fatalf("provider.Cancelled = %v, ожидали [ext-callback-stop-error]", provider.Cancelled)
+		t.Fatalf("provider.Cancelled = %v, want [ext-callback-stop-error]", provider.Cancelled)
 	}
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobFailed) {
-		t.Fatalf("status = %q, ожидали failed после stop error", status)
+		t.Fatalf("status = %q, want failed after stop error", status)
 	}
 	if used := trialUsed(t, s, userID); used != 0 {
-		t.Fatalf("trial_used = %d, ожидали refund", used)
+		t.Fatalf("trial_used = %d, want refund", used)
 	}
 }
 
@@ -821,38 +821,38 @@ func TestOnRedeliver_FailedSummarySendsTranscript(t *testing.T) {
 		t.Fatalf("onRedeliver: %v", err)
 	}
 	if c.responded != 1 {
-		t.Fatalf("Respond вызван %d раз, ожидали 1", c.responded)
+		t.Fatalf("Respond called %d times, want 1", c.responded)
 	}
 	if len(c.sent) != 1 {
-		t.Fatalf("Send вызван %d раз, ожидали 1", len(c.sent))
+		t.Fatalf("Send called %d times, want 1", len(c.sent))
 	}
 	doc, ok := c.sent[0].(*tele.Document)
 	if !ok {
-		t.Fatalf("Send получил %T, ожидали *tele.Document", c.sent[0])
+		t.Fatalf("Send got %T, want *tele.Document", c.sent[0])
 	}
 	if doc.FileName != transcriptFilename(job.CreatedAt) {
-		t.Errorf("имя файла %q, ожидали %q", doc.FileName, transcriptFilename(job.CreatedAt))
+		t.Errorf("file name %q, want %q", doc.FileName, transcriptFilename(job.CreatedAt))
 	}
 	body, err := io.ReadAll(doc.FileReader)
 	if err != nil {
 		t.Fatalf("read sent doc: %v", err)
 	}
 	if !strings.Contains(string(body), "# Транскрипт встречи") {
-		t.Errorf("документ не похож на транскрипт: %q", string(body))
+		t.Errorf("document does not look like a transcript: %q", string(body))
 	}
 }
 
 func TestSupportText_ShowsContact(t *testing.T) {
 	texts := defaultTexts()
 	if !strings.Contains(texts.support, "@dasukhar") || !strings.Contains(texts.support, "support@example.com") {
-		t.Fatalf("support text = %q, ожидали контакты поддержки", texts.support)
+		t.Fatalf("support text = %q, want support contacts", texts.support)
 	}
 }
 
 func TestPaymentError_ShowsSupportContact(t *testing.T) {
 	texts := defaultTexts()
 	if !strings.Contains(texts.paymentError, "@dasukhar") || !strings.Contains(texts.paymentError, "support@example.com") {
-		t.Fatalf("paymentError = %q, ожидали контакты поддержки", texts.paymentError)
+		t.Fatalf("paymentError = %q, want support contacts", texts.paymentError)
 	}
 }
 
@@ -869,8 +869,8 @@ func TestOnRedeliverSummary_UsesCachedSummary(t *testing.T) {
 	}
 	job = reloadJob(t, s, job.ID)
 
-	provider := &summaryFetchProvider{result: Result{TranscriptMarkdown: "не должен вызываться"}}
-	summarizer := &summaryCountingSummarizer{summary: "не должен вызываться"}
+	provider := &summaryFetchProvider{result: Result{TranscriptMarkdown: "must not be called"}}
+	summarizer := &summaryCountingSummarizer{summary: "must not be called"}
 	b := &Bot{
 		storage: s,
 		providers: map[string]TranscriptionProvider{
@@ -888,17 +888,17 @@ func TestOnRedeliverSummary_UsesCachedSummary(t *testing.T) {
 		t.Fatalf("onRedeliverSummary: %v", err)
 	}
 	if c.responded != 1 {
-		t.Fatalf("Respond вызван %d раз, ожидали 1", c.responded)
+		t.Fatalf("Respond called %d times, want 1", c.responded)
 	}
 	if len(c.sent) != 1 {
-		t.Fatalf("Send вызван %d раз, ожидали 1", len(c.sent))
+		t.Fatalf("Send called %d times, want 1", len(c.sent))
 	}
 	doc, ok := c.sent[0].(*tele.Document)
 	if !ok {
-		t.Fatalf("Send получил %T, ожидали *tele.Document", c.sent[0])
+		t.Fatalf("Send got %T, want *tele.Document", c.sent[0])
 	}
 	if doc.FileName != summaryFilename(job.CreatedAt) {
-		t.Errorf("имя файла %q, ожидали %q", doc.FileName, summaryFilename(job.CreatedAt))
+		t.Errorf("file name %q, want %q", doc.FileName, summaryFilename(job.CreatedAt))
 	}
 	if doc.Caption != "📝 Саммари встречи от "+formatCallTime(job.CreatedAt) {
 		t.Errorf("caption %q", doc.Caption)
@@ -908,13 +908,13 @@ func TestOnRedeliverSummary_UsesCachedSummary(t *testing.T) {
 		t.Fatalf("read sent doc: %v", err)
 	}
 	if string(body) != summary {
-		t.Errorf("контент summary = %q, ожидали %q", string(body), summary)
+		t.Errorf("summary content = %q, want %q", string(body), summary)
 	}
 	if provider.fetchCalls != 0 {
-		t.Fatalf("Fetch вызван %d раз, ожидали 0 для cached summary", provider.fetchCalls)
+		t.Fatalf("Fetch called %d times, want 0 for cached summary", provider.fetchCalls)
 	}
 	if summarizer.calls != 0 {
-		t.Fatalf("Summarize вызван %d раз, ожидали 0 для cached summary", summarizer.calls)
+		t.Fatalf("Summarize called %d times, want 0 for cached summary", summarizer.calls)
 	}
 }
 
@@ -944,24 +944,24 @@ func TestOnRedeliverSummary_RestoresFailedSummaryWithGeneratedSummary(t *testing
 		t.Fatalf("onRedeliverSummary: %v", err)
 	}
 	if c.responded != 1 {
-		t.Fatalf("Respond вызван %d раз, ожидали 1", c.responded)
+		t.Fatalf("Respond called %d times, want 1", c.responded)
 	}
 	if provider.fetchCalls != 1 {
-		t.Fatalf("Fetch вызван %d раз, ожидали 1", provider.fetchCalls)
+		t.Fatalf("Fetch called %d times, want 1", provider.fetchCalls)
 	}
 	if summarizer.calls != 1 {
-		t.Fatalf("Summarize вызван %d раз, ожидали 1", summarizer.calls)
+		t.Fatalf("Summarize called %d times, want 1", summarizer.calls)
 	}
 	assertSummaryDocument(t, c, job, "восстановленный конспект")
 	reloaded := reloadJob(t, s, job.ID)
 	if reloaded.Status != JobDone {
-		t.Fatalf("status = %q, ожидали done", reloaded.Status)
+		t.Fatalf("status = %q, want done", reloaded.Status)
 	}
 	if reloaded.SummaryMD == nil || *reloaded.SummaryMD != "восстановленный конспект" {
-		t.Fatalf("summary_md = %v, ожидали восстановленный конспект", reloaded.SummaryMD)
+		t.Fatalf("summary_md = %v, want the restored summary", reloaded.SummaryMD)
 	}
 	if reloaded.LastError != nil {
-		t.Fatalf("last_error = %v, ожидали NULL после восстановления", *reloaded.LastError)
+		t.Fatalf("last_error = %v, want NULL after recovery", *reloaded.LastError)
 	}
 }
 
@@ -978,7 +978,7 @@ func TestOnRedeliverSummary_UsesProviderSummaryWithoutSummarizer(t *testing.T) {
 		TranscriptMarkdown: "# Транскрипт встречи\n\nТекст",
 		SummaryMarkdown:    "provider summary",
 	}}
-	summarizer := &summaryCountingSummarizer{summary: "не должен вызываться"}
+	summarizer := &summaryCountingSummarizer{summary: "must not be called"}
 	b := &Bot{
 		storage:    s,
 		providers:  map[string]TranscriptionProvider{"mock": provider},
@@ -994,14 +994,14 @@ func TestOnRedeliverSummary_UsesProviderSummaryWithoutSummarizer(t *testing.T) {
 		t.Fatalf("onRedeliverSummary: %v", err)
 	}
 	if provider.fetchCalls != 1 {
-		t.Fatalf("Fetch вызван %d раз, ожидали 1", provider.fetchCalls)
+		t.Fatalf("Fetch called %d times, want 1", provider.fetchCalls)
 	}
 	if summarizer.calls != 0 {
-		t.Fatalf("Summarize вызван %d раз, ожидали 0", summarizer.calls)
+		t.Fatalf("Summarize called %d times, want 0", summarizer.calls)
 	}
 	assertSummaryDocument(t, c, job, "provider summary")
 	if status, _, _ := jobRow(t, s, job.ID); status != string(JobDone) {
-		t.Fatalf("status = %q, ожидали done", status)
+		t.Fatalf("status = %q, want done", status)
 	}
 }
 
@@ -1029,17 +1029,17 @@ func TestOnRedeliverSummary_FailureKeepsFailedSummary(t *testing.T) {
 		t.Fatalf("onRedeliverSummary: %v", err)
 	}
 	if len(c.sent) != 1 {
-		t.Fatalf("Send вызван %d раз, ожидали 1 с сообщением об ошибке", len(c.sent))
+		t.Fatalf("Send called %d times, want 1 with an error message", len(c.sent))
 	}
 	if text, ok := c.sent[0].(string); !ok || text != b.texts.summaryNotAvailable {
-		t.Fatalf("sent = %#v, ожидали summaryNotAvailable", c.sent[0])
+		t.Fatalf("sent = %#v, want summaryNotAvailable", c.sent[0])
 	}
 	reloaded := reloadJob(t, s, job.ID)
 	if reloaded.Status != JobFailedSummary {
-		t.Fatalf("status = %q, ожидали failed_summary", reloaded.Status)
+		t.Fatalf("status = %q, want failed_summary", reloaded.Status)
 	}
 	if reloaded.SummaryMD != nil {
-		t.Fatalf("summary_md = %v, ожидали nil", *reloaded.SummaryMD)
+		t.Fatalf("summary_md = %v, want nil", *reloaded.SummaryMD)
 	}
 }
 
@@ -1181,21 +1181,21 @@ func TestOnText_IgnoredTextDoesNotLogContent(t *testing.T) {
 func assertSummaryDocument(t *testing.T, c *fakeTeleContext, job Job, want string) {
 	t.Helper()
 	if len(c.sent) != 1 {
-		t.Fatalf("Send вызван %d раз, ожидали 1", len(c.sent))
+		t.Fatalf("Send called %d times, want 1", len(c.sent))
 	}
 	doc, ok := c.sent[0].(*tele.Document)
 	if !ok {
-		t.Fatalf("Send получил %T, ожидали *tele.Document", c.sent[0])
+		t.Fatalf("Send got %T, want *tele.Document", c.sent[0])
 	}
 	if doc.FileName != summaryFilename(job.CreatedAt) {
-		t.Errorf("имя файла %q, ожидали %q", doc.FileName, summaryFilename(job.CreatedAt))
+		t.Errorf("file name %q, want %q", doc.FileName, summaryFilename(job.CreatedAt))
 	}
 	body, err := io.ReadAll(doc.FileReader)
 	if err != nil {
 		t.Fatalf("read sent doc: %v", err)
 	}
 	if string(body) != want {
-		t.Errorf("контент summary = %q, ожидали %q", string(body), want)
+		t.Errorf("summary content = %q, want %q", string(body), want)
 	}
 }
 

@@ -1,104 +1,104 @@
-# DevOps-практики transcrib (эталон под наш масштаб)
+# transcrib DevOps practices (reference sized for our scale)
 
-> **Назначение:** прагматичный канон деплоя и эксплуатации — «как делают правильно» в индустрии, отфильтрованное под нашу реальность (один Go-сервис, один VPS, Docker Compose, CI/CD, две среды).
-> **Происхождение:** мультиагентный ресёрч (8 категорий, 87 практик, сверка с первоисточниками) + инфра-ревью слайса CI/CD (2026-06-22). Помечено явно: что берём сейчас / откладываем / сознательно пропускаем.
+> **Purpose:** a pragmatic deploy and operations canon: "how it is done right" in the industry, filtered for our reality (one Go service, one VPS, Docker Compose, CI/CD, two environments).
+> **Origin:** multi-agent research (8 categories, 87 practices, checked against primary sources) + an infra review of the CI/CD slice (2026-06-22). Marked explicitly: what we take now / defer / deliberately skip.
 
-## Наш масштаб (под него фильтруем)
+## Our scale (we filter for it)
 
-Один Go-монолит (Telegram-бот, long polling — один потребитель на токен), Postgres как БД и очередь, деньги (ЮKassa) и Google OAuth. Один общий VPS (~4 vCPU/8 ГБ), Docker Compose/Coolify, без кластера; Vexa остановлена 2026-06-26, но сервер остаётся общим. Dev CD и prod CD идут через GitHub Actions -> GHCR -> Coolify; prod выкатывается только вручную по release tag, legacy bare-repo hook остаётся fallback. Канон проекта: **минимум инфры, без k8s**. Девопс ведёт AI-агент.
+One Go monolith (Telegram bot, long polling: one consumer per token), Postgres as DB and queue, money (YooKassa) and Google OAuth. One shared VPS (~4 vCPU/8 GB), Docker Compose/Coolify, no cluster; Vexa was stopped on 2026-06-26, but the server remains shared. Dev CD and prod CD go through GitHub Actions -> GHCR -> Coolify; prod is rolled out only manually by release tag, the legacy bare-repo hook remains a fallback. Project canon: **minimum infrastructure, no k8s**. DevOps is run by an AI agent.
 
-Главное следствие масштаба: **цель — дешёвый откат и чистая остановка, а не zero-downtime**; эталонные «энтерпрайз»-меры (k8s, Vault, GitOps, PITR, OIDC-федерация) для нас — over-engineering, пока не упрёмся.
+The main consequence of the scale: **the goal is a cheap rollback and a clean stop, not zero-downtime**; the reference "enterprise" measures (k8s, Vault, GitOps, PITR, OIDC federation) are over-engineering for us until we hit a limit.
 
-## Эталон по категориям → что берём сейчас
+## Reference by category: what we take now
 
-| Категория | Эталон (как правильно) | Берём сейчас |
+| Category | Reference (how it is done right) | Taken now |
 |---|---|---|
-| **Сборка/артефакты** | Multi-stage, non-root, минимальный base (distroless), тег по git-SHA, реестр | distroless/nonroot (есть), GitHub Actions build, GHCR image `sha-<sha>` + moving tags `dev/prod`; legacy server build только fallback |
-| **Конфиг/секреты** | 12-factor, секреты вне git/логов/образа, шифрование чувствительного at-rest, ротация | `.env` chmod 600 (есть), **off-box зашифрованное хранилище секретов**, `gitleaks` pre-commit, шифрование `refresh_token` |
-| **Выкатка/откат** | Health-gated, быстрый откат на прошлый артефакт, graceful shutdown | **recreate** (blue-green для бота невозможен), **откат на прежний git-SHA-тег**, пост-деплой health-сигнал |
-| **Миграции БД** | Обратносовместимые (expand-contract), `lock_timeout`, индексы `CONCURRENTLY`, forward-fix | expand-contract, `pg_dump` ПЕРЕД разрушающей, `lock_timeout`, forward-fix вместо `goose down` на проде |
-| **CI/CD** | Тест-гейт, продвижение по средам, ручной approval на прод, контроль конкурентности | GitHub Actions: тест-гейт, **dev авто через Coolify / prod ручной workflow_dispatch**, legacy `flock` только fallback |
-| **Supply-chain CI** | Pin actions по commit-SHA, least-privilege токен, секреты вне PR-воркфлоу | **pin по SHA**, `permissions: contents: read`, секреты в protected `production`-environment, Dependabot |
-| **Наблюдаемость/бэкап** | Структурные логи, ротация, health, метрики/алерты, бэкап + тест восстановления | slog JSON + ротация (есть), **ежедневный off-box `pg_dump` + ежемесячный restore-тест**, cron-алерты (диск/бэкап/зомби) |
-| **Хардненинг хоста** | Non-root деплой, forced-command SSH-ключ, firewall, non-root в контейнере, изоляция | **`deploy`-юзер вместо root** + forced-command, `cap_drop: all`+`no-new-privileges`, **Dozzle на localhost** (Docker публикует порт в обход ufw!) |
+| **Build/artifacts** | Multi-stage, non-root, minimal base (distroless), git-SHA tag, registry | distroless/nonroot (in place), GitHub Actions build, GHCR image `sha-<sha>` + moving tags `dev/prod`; legacy server build only as a fallback |
+| **Config/secrets** | 12-factor, secrets outside git/logs/image, encryption of sensitive data at rest, rotation | `.env` chmod 600 (in place), **off-box encrypted secret storage**, `gitleaks` pre-commit, `refresh_token` encryption |
+| **Rollout/rollback** | Health-gated, fast rollback to the previous artifact, graceful shutdown | **recreate** (blue-green is impossible for the bot), **rollback to the previous git-SHA tag**, post-deploy health signal |
+| **DB migrations** | Backward compatible (expand-contract), `lock_timeout`, `CONCURRENTLY` indexes, forward-fix | expand-contract, `pg_dump` BEFORE a destructive one, `lock_timeout`, forward-fix instead of `goose down` on prod |
+| **CI/CD** | Test gate, promotion across environments, manual approval for prod, concurrency control | GitHub Actions: test gate, **dev auto via Coolify / prod manual workflow_dispatch**, legacy `flock` only as a fallback |
+| **CI supply chain** | Pin actions by commit SHA, least-privilege token, secrets outside PR workflows | **pin by SHA**, `permissions: contents: read`, secrets in the protected `production` environment, Dependabot |
+| **Observability/backup** | Structured logs, rotation, health, metrics/alerts, backup + restore test | slog JSON + rotation (in place), **daily off-box `pg_dump` + monthly restore test**, cron alerts (disk/backup/zombies) |
+| **Host hardening** | Non-root deploy, forced-command SSH key, firewall, non-root in the container, isolation | **`deploy` user instead of root** + forced-command, `cap_drop: all` + `no-new-privileges`, **Dozzle on localhost** (Docker publishes the port bypassing ufw!) |
 
-## Что уже внедрено
+## Already implemented
 
-- Git-SHA image tag на prod/test, без общего `:latest`.
-- GitHub Actions: CI workflow и deploy workflow гоняют DB-backed tests с миграциями; deploy workflow
-  не собирает и не выкатывает GHCR image, если DB-backed проверки не прошли.
-- Coolify dev CD: service `transcrib-dev` в environment `dev`, image `ghcr.io/daniil4545/transcrib:sha-<sha>`.
-- Coolify prod CD: service `transcrib-prod` в environment `prod`, текущий rollout `0.0.3.4` выполнен через GitHub Actions -> GHCR -> Coolify.
-- Coolify MCP: read-only endpoint `https://coolify.example.com/mcp` для AI-агента; использовать как
-  быстрый обзор Coolify resources, не как механизм deploy или env changes.
-- Coolify Telegram notifications: для самого Coolify задан `APP_URL=https://coolify.example.com`
-  и pin `api.telegram.org:149.154.167.220`; без этого infra alerts падают по timeout или
-  `http://localhost` inline button URL.
-- Exact-SHA checkout в deploy hook, отдельный deploy-index на среду, `flock` против гонки сборок.
-- Dev/test bot как отдельная Coolify-среда с отдельным Postgres volume и Telegram token; legacy
-  `transcrib-dev` Postgres сохранён, app остановлен.
-- On-server `pg_dump` как временный degraded backup, retention 14 дней, restore-test пройден.
-- Journald-архив Coolify prod и legacy prod/test `app` и `postgres` с retention 14 дней (`MaxRetentionSec=14day`,
+- Git-SHA image tag on prod/test, no shared `:latest`.
+- GitHub Actions: the CI workflow and the deploy workflow run DB-backed tests with migrations; the deploy workflow
+  does not build or roll out a GHCR image if the DB-backed checks failed.
+- Coolify dev CD: service `transcrib-dev` in environment `dev`, image `ghcr.io/daniil4545/transcrib:sha-<sha>`.
+- Coolify prod CD: service `transcrib-prod` in environment `prod`, the current rollout `0.0.3.4` was done through GitHub Actions -> GHCR -> Coolify.
+- Coolify MCP: read-only endpoint `https://coolify.example.com/mcp` for the AI agent; use it as a
+  quick overview of Coolify resources, not as a deploy or env change mechanism.
+- Coolify Telegram notifications: Coolify itself has `APP_URL=https://coolify.example.com`
+  and the pin `api.telegram.org:149.154.167.220`; without this, infra alerts fail with a timeout or
+  an `http://localhost` inline button URL.
+- Exact-SHA checkout in the deploy hook, a separate deploy index per environment, `flock` against build races.
+- The dev/test bot as a separate Coolify environment with a separate Postgres volume and Telegram token; the legacy
+  `transcrib-dev` Postgres is kept, the app is stopped.
+- On-server `pg_dump` as a temporary degraded backup, 14-day retention, restore-test passed.
+- A journald archive of Coolify prod and legacy prod/test `app` and `postgres` with 14-day retention (`MaxRetentionSec=14day`,
   `SystemMaxUse=2G`, `SystemKeepFree=10G`).
-- Coolify dev logs сейчас читаются через Docker `json-file`/Coolify UI, не через 14-дневный
-  journald-архив.
-- Dozzle запущен с фильтром `name=transcrib`: подходит для legacy `transcrib-*` контейнеров, но не
-  является viewer'ом active Coolify prod/dev `app-*`/`postgres-*`; порт закрыт на `127.0.0.1:48080`,
-  доступ через SSH tunnel.
-- `safe-ssh.sh` покрывает ручную read-only диагностику не только app/Postgres, но и системный слой:
+- Coolify dev logs are currently read through Docker `json-file`/Coolify UI, not through the 14-day
+  journald archive.
+- Dozzle is started with the filter `name=transcrib`: it suits the legacy `transcrib-*` containers, but is not
+  a viewer of the active Coolify prod/dev `app-*`/`postgres-*`; the port is closed to `127.0.0.1:48080`,
+  access through an SSH tunnel.
+- `safe-ssh.sh` covers manual read-only diagnostics not only of app/Postgres, but also of the system layer:
   failed systemd units, Docker events/daemon journal, kernel/OOM, cron, backup log, nginx journal,
   disk/memory.
 
-## Следующее P0
+## Next P0
 
 **P0:**
-1. **Off-box `pg_dump`** prod-БД (runbook `../deploy/backup.md`) + ежемесячный restore-test.
-2. **Off-box зашифрованное хранилище секретов** + runbook (потеря локальной копии перестаёт быть ЧП).
-3. **Автоматические prod health/log alerts** для Coolify prod: restart-loop, OOM, backup freshness,
-   disk и zombie jobs; Coolify Telegram notifications уже требуют корректные `APP_URL` и
+1. **Off-box `pg_dump`** of the prod DB (runbook `../deploy/backup.md`) + a monthly restore test.
+2. **Off-box encrypted secret storage** + runbook (losing the local copy stops being an emergency).
+3. **Automatic prod health/log alerts** for Coolify prod: restart-loop, OOM, backup freshness,
+   disk and zombie jobs; Coolify Telegram notifications already require a correct `APP_URL` and the
    `api.telegram.org` pin.
-4. **Непривилегированный `deploy`-юзер** (группа docker) вместо root + forced-command в `authorized_keys`.
-5. **Dozzle на `127.0.0.1`** — закрыто 2026-07-01; проверять pre-beta smoke.
-6. **Ротация/контроль `backup.log`** для on-server cron, пока off-box backup не внедрён.
+4. **Unprivileged `deploy` user** (docker group) instead of root + forced-command in `authorized_keys`.
+5. **Dozzle on `127.0.0.1`**: closed on 2026-07-01; verify in the pre-beta smoke.
+6. **Rotation/control of `backup.log`** for the on-server cron, until the off-box backup is in place.
 
 **P1:**
-6. Пост-деплой health-сигнал (лог старта / `getMe`) — отличать «поднялось» от restart-loop.
-7. 4 cron-алерта или metrics stack после запуска: диск, провал бэкапа, зомби-джобы,
-   недоступность Telegram-DC (`extra_hosts`-пин).
-8. Дисциплина миграций в `db.md` (expand-contract, `lock_timeout`, `CONCURRENTLY`).
-9. `cap_drop: all` + `no-new-privileges` в compose.
-10. `gitleaks` pre-commit (секреты не утекают в git).
-11. Supply-chain: pin actions по SHA, least-privilege токен, секреты в protected environment.
-12. Metrics/monitoring slice: после публичного запуска выбрать Grafana/Prometheus или более простой
-    lightweight healthcheck-агент.
+6. Post-deploy health signal (startup log / `getMe`): tell "came up" from a restart-loop.
+7. 4 cron alerts or a metrics stack after launch: disk, backup failure, zombie jobs,
+   Telegram DC unavailability (`extra_hosts` pin).
+8. Migration discipline in `db.md` (expand-contract, `lock_timeout`, `CONCURRENTLY`).
+9. `cap_drop: all` + `no-new-privileges` in compose.
+10. `gitleaks` pre-commit (secrets do not leak into git).
+11. Supply chain: pin actions by SHA, least-privilege token, secrets in a protected environment.
+12. Metrics/monitoring slice: after the public launch choose Grafana/Prometheus or a simpler
+    lightweight healthcheck agent.
 
-## Откладываем (с триггером возврата)
+## Deferred (with a trigger to return)
 
-- **Шифрование `refresh_token` AES-GCM** — вместе с переходом Google в Production (google-слайс).
-- **Trivy/SBOM-скан образа** — после того как заведём Actions.
-- **HTTP `Shutdown` graceful** — когда появится `web.go` (OAuth callback).
-- **Реплика Postgres (HA)** — когда аптайм станет критичен (это про отказ железа, не про потерю данных).
+- **`refresh_token` AES-GCM encryption**: together with Google moving to Production (google slice).
+- **Trivy/SBOM image scan**: after we set up Actions.
+- **HTTP graceful `Shutdown`**: when `web.go` appears (OAuth callback).
+- **Postgres replica (HA)**: when uptime becomes critical (this is about hardware failure, not data loss).
 
-## Сознательно НЕ делаем (на нашем масштабе)
+## Deliberately NOT doing (at our scale)
 
-- **Blue-green для бота** — ломает single-consumer (два поллера = `409`). Только recreate.
-- **Vault/секрет-менеджер** — лишняя инфра; хватает `sops`+`age` / менеджера паролей.
-- **WAL/PITR** — ежедневного дампа достаточно (потеря до суток приемлема; пересмотреть, если RPO ужесточится).
-- **Prometheus/Grafana** — cron-алертов хватает на одном боксе.
-- **OIDC-федерация для деплоя из облака, Cosign-подпись, k8s, rootless Docker** — не наш масштаб/риск.
+- **Blue-green for the bot**: breaks the single consumer (two pollers = `409`). Only recreate.
+- **Vault/secret manager**: extra infrastructure; `sops`+`age` / a password manager is enough.
+- **WAL/PITR**: a daily dump is enough (losing up to a day is acceptable; revisit if the RPO tightens).
+- **Prometheus/Grafana**: cron alerts are enough on one box.
+- **OIDC federation for deploy from the cloud, Cosign signing, k8s, rootless Docker**: not our scale/risk.
 
-## Развод мер защиты (важно не путать)
+## Separating the protection measures (important not to confuse)
 
-| От чего защищает | Мера |
+| What it protects against | Measure |
 |---|---|
-| Потеря/порча **данных**, ошибка ИИ/человека | Бэкап `pg_dump` off-box + restore-тест |
-| Потеря **доступа/секрета** | Secrets-management (зашифрованное забэкапленное хранилище) |
-| Отказ **железа/хоста** | Реплика (HA) — отложено |
+| Loss/corruption of **data**, AI/human error | Off-box `pg_dump` backup + restore test |
+| Loss of **access/secret** | Secrets management (an encrypted, backed-up storage) |
+| Failure of **hardware/host** | Replica (HA): deferred |
 
-Реплика дословно реплицирует и `DROP TABLE` — от ошибки не спасает. От ошибки спасает только бэкап.
+A replica replicates a `DROP TABLE` verbatim too: it does not save from a mistake. Only a backup saves from a mistake.
 
-## Принципы devops-агента (ALWAYS / NEVER)
+## Principles of the devops agent (ALWAYS / NEVER)
 
-**ВСЕГДА:** `pg_dump` перед разрушающей миграцией · `lock_timeout` в рискованной миграции · индексы `CONCURRENTLY` на заполненных таблицах · миграция обратносовместима · git-SHA-тег для отката · проверить «бот стартовал» после деплоя · секреты вне git/логов · помнить, что Docker публикует порт в обход ufw.
+**ALWAYS:** `pg_dump` before a destructive migration · `lock_timeout` in a risky migration · `CONCURRENTLY` indexes on populated tables · a migration is backward compatible · a git-SHA tag for rollback · check "the bot started" after a deploy · secrets outside git/logs · remember that Docker publishes a port bypassing ufw.
 
-**НИКОГДА:** деплой без зелёного DB-backed `make ci-check` с `DATABASE_URL` · blue-green для бота · `goose down` как способ восстановления прода · бэкап без off-box restore-теста · `docker.sock` в app-контейнер · прерывать идущий деплой · считать deny `Read(.env)` барьером на боксе (root-SSH его обходит через `docker exec/inspect`) · читать секреты через SSH (`.env`, `docker inspect env`, `docker exec printenv`).
+**NEVER:** deploy without a green DB-backed `make ci-check` with `DATABASE_URL` · blue-green for the bot · `goose down` as a way to restore prod · a backup without an off-box restore test · `docker.sock` in the app container · interrupt a running deploy · treat a `Read(.env)` deny as a barrier on the box (root SSH bypasses it via `docker exec/inspect`) · read secrets over SSH (`.env`, `docker inspect env`, `docker exec printenv`).

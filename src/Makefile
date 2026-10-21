@@ -1,5 +1,5 @@
-# DATABASE_URL и BOT_TOKEN берутся из окружения. Если рядом лежит .env —
-# подхватываем автоматически (make читает файл, значения видны в run/migrate).
+# DATABASE_URL and BOT_TOKEN are taken from the environment. If a .env file is nearby,
+# it is picked up automatically (make reads the file, the values are visible in run/migrate).
 ifneq ($(NO_DOTENV),1)
     ENV_FILE := $(firstword $(wildcard .env ../.env))
     ifneq (,$(ENV_FILE))
@@ -7,9 +7,9 @@ ifneq ($(NO_DOTENV),1)
         export
     endif
 endif
-# Опциональный оверрайд (напр. локальный тест): грузится ПОВЕРХ .env и перебивает
-# значения. Только не-секретные переключатели; секреты остаются в .env.
-# Использование: make run ENV_OVERRIDE=.env.test
+# Optional override (e.g. a local test): loaded ON TOP of .env and overrides its
+# values. Non-secret switches only; secrets stay in .env.
+# Usage: make run ENV_OVERRIDE=.env.test
 ifneq ($(NO_DOTENV),1)
     ifneq (,$(ENV_OVERRIDE))
         -include $(ENV_OVERRIDE)
@@ -31,15 +31,15 @@ build:
 test:
 	go test ./...
 
-# Быстрый ярус для петли внутри задачи: только то, что не ходит в БД.
+# Fast tier for the loop inside a task: only what does not touch the DB.
 test-fast:
 	go test -short ./... $(if $(RUN),-run $(RUN) -count=1,)
 
 vet:
 	go vet ./...
 
-# Форматирование не ловит никто другой: gofmt нет ни в дефолтном наборе
-# golangci-lint, ни в хуке на правку файла.
+# Nobody else catches formatting: gofmt is neither in the default golangci-lint
+# set nor in the file-edit hook.
 fmt-check:
 	@out=$$(gofmt -l ./cmd ./internal); \
 	test -z "$$out" || { echo "gofmt needed:"; echo "$$out"; exit 1; }
@@ -47,12 +47,12 @@ fmt-check:
 lint:
 	golangci-lint run --timeout 120s
 
-# Кольцо коммита: секунды, без БД. Запускается хуком перед каждым git commit
-# с .go в индексе. Полный набор закрывает задачу - ci-check.
+# Commit ring: seconds, no DB. Run by a hook before every git commit
+# with .go files in the index. The full set closes a task: ci-check.
 #
-# test-fast сюда не входит: тесты проекта не разделены на быстрые и БД-зависимые,
-# `go test -short` всё равно идёт в Postgres и падает без поднятого compose.
-# Разделить их - отдельная задача; до тех пор тесты закрывает ci-check.
+# test-fast is not included here: the project tests are not split into fast and DB-dependent,
+# `go test -short` still goes to Postgres and fails without a running compose.
+# Splitting them is a separate task; until then ci-check covers the tests.
 commit-check: fmt-check vet lint
 
 deploy-check:
@@ -63,12 +63,12 @@ ci-check: migrate-up deploy-check
 	go vet ./...
 	go build ./...
 
-# Живой вызов OpenRouter ключом из .env (build-тег live, обычный test его не трогает).
+# Live OpenRouter call with the key from .env (build tag live, a regular test does not touch it).
 live-summary:
 	go test -tags live -run TestOpenRouter_Live -v -count=1 ./internal/app
 
-# Диагностика: какой бот за BOT_TOKEN (@username). Токен в вывод не попадает
-# (@ глушит эхо рецепта, ответ getMe токена не содержит).
+# Diagnostics: which bot is behind BOT_TOKEN (@username). The token does not reach the output
+# (@ suppresses the recipe echo, the getMe response does not contain the token).
 bot-whoami:
 	@curl -s "https://api.telegram.org/bot$(BOT_TOKEN)/getMe" | grep -o '"username":"[^"]*"\|"ok":[a-z]*\|"description":"[^"]*"'
 

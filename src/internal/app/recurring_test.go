@@ -19,8 +19,8 @@ func TestRecurringWorker_CreatesPendingPaymentOnce(t *testing.T) {
 	cleanupPayments(t, s, userID)
 	nextChargeAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	insertRecurringProfile(t, s, userID, "pm-worker-1", "active", nextChargeAt)
-	// Свежий цикл списания: обнуляем seed-счётчик попыток из хелпера, чтобы
-	// проверить, что первое успешное списание даёт attempts_count = 1.
+	// Fresh charge cycle: reset the seed attempts counter from the helper, to
+	// verify that the first successful charge gives attempts_count = 1.
 	if _, err := s.pool.Exec(ctx,
 		`UPDATE recurring_profiles SET attempts_count = 0, last_error = NULL WHERE user_id = $1`,
 		userID,
@@ -78,7 +78,7 @@ func TestRecurringWorker_CreatesPendingPaymentOnce(t *testing.T) {
 		t.Fatalf("tickOnce: %v", err)
 	}
 	if calls != 1 {
-		t.Fatalf("calls = %d, ожидали 1", calls)
+		t.Fatalf("calls = %d, expected 1", calls)
 	}
 	if body.PaymentMethodID != "pm-worker-1" {
 		t.Fatalf("payment_method_id = %q", body.PaymentMethodID)
@@ -92,7 +92,7 @@ func TestRecurringWorker_CreatesPendingPaymentOnce(t *testing.T) {
 	assertRecurringPayment(t, s, userID, "yk-recurring-worker-1", recurringPaymentIntentKey(userID, nextChargeAt), "pm-worker-1", "pending")
 	startedProfile := recurringProfile(t, s, userID)
 	if startedProfile.status != "charging" {
-		t.Fatalf("profile.status after StartRecurringPaymentIntent = %q, ожидали charging", startedProfile.status)
+		t.Fatalf("profile.status after StartRecurringPaymentIntent = %q, expected charging", startedProfile.status)
 	}
 
 	if err := worker.tickOnce(ctx); err != nil {
@@ -132,8 +132,8 @@ func TestRecurringWorker_RetriesPendingIntentWithoutProviderID(t *testing.T) {
 	if !created {
 		t.Fatalf("expected initial local intent")
 	}
-	// claim выставил updated_at=now(); состариваем сверх 2-min lease, чтобы
-	// следующий тик переподхватил зависший charging-профиль на retry POST.
+	// claim set updated_at=now(); age it beyond the 2-min lease so that the
+	// next tick picks up the stuck charging profile for a retry POST.
 	if _, err := s.pool.Exec(ctx,
 		`UPDATE recurring_profiles SET updated_at = now() - INTERVAL '3 minutes' WHERE user_id = $1`,
 		userID,
@@ -172,7 +172,7 @@ func TestRecurringWorker_RetriesPendingIntentWithoutProviderID(t *testing.T) {
 		t.Fatalf("tickOnce: %v", err)
 	}
 	if calls != 1 {
-		t.Fatalf("calls = %d, ожидали retry внешнего POST", calls)
+		t.Fatalf("calls = %d, expected a retry of the external POST", calls)
 	}
 	assertRecurringPayment(t, s, userID, "yk-recurring-retry-provider", intent.IntentKey, "pm-worker-retry", "pending")
 }
@@ -240,7 +240,7 @@ func TestRecurringWorker_StalePendingIntentWithoutProviderIDDoesNotCharge(t *tes
 		t.Fatalf("tickOnce: %v", err)
 	}
 	if calls != 0 {
-		t.Fatalf("external POST calls = %d, ожидали 0 после retry window", calls)
+		t.Fatalf("external POST calls = %d, expected 0 after the retry window", calls)
 	}
 	var status string
 	var failedAt *time.Time
@@ -251,7 +251,7 @@ func TestRecurringWorker_StalePendingIntentWithoutProviderIDDoesNotCharge(t *tes
 		t.Fatalf("query payment: %v", err)
 	}
 	if status != string(PaymentFailed) || failedAt == nil {
-		t.Fatalf("payment status/failed_at = %q/%v, ожидали failed", status, failedAt)
+		t.Fatalf("payment status/failed_at = %q/%v, expected failed", status, failedAt)
 	}
 	profile := recurringProfile(t, s, userID)
 	if profile.status != "blocked" || profile.lastError == nil {
@@ -274,17 +274,17 @@ func TestRecurringWorker_DisabledAfterClaimDoesNotCharge(t *testing.T) {
 		t.Fatalf("DueRecurringProfiles: %v", err)
 	}
 	if len(profiles) != 1 {
-		t.Fatalf("profiles len = %d, ожидали 1", len(profiles))
+		t.Fatalf("profiles len = %d, expected 1", len(profiles))
 	}
 	changed, err := s.DisableRecurring(ctx, userID)
 	if err != nil {
 		t.Fatalf("DisableRecurring: %v", err)
 	}
 	if !changed {
-		t.Fatal("DisableRecurring changed=false, ожидали true")
+		t.Fatal("DisableRecurring changed=false, expected true")
 	}
 	if methodID := recurringProfilePaymentMethodID(t, s, userID); methodID != nil {
-		t.Fatalf("payment_method_id = %q, ожидали NULL после disable", *methodID)
+		t.Fatalf("payment_method_id = %q, expected NULL after disable", *methodID)
 	}
 
 	var calls int
@@ -307,14 +307,14 @@ func TestRecurringWorker_DisabledAfterClaimDoesNotCharge(t *testing.T) {
 	worker := NewRecurringWorker(s, b, time.Hour, true)
 	worker.chargeProfile(ctx, profiles[0])
 	if calls != 0 {
-		t.Fatalf("external POST calls = %d, ожидали 0 после disable", calls)
+		t.Fatalf("external POST calls = %d, expected 0 after disable", calls)
 	}
 	var payments int
 	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE user_id = $1 AND payment_intent_key = $2`, userID, recurringPaymentIntentKey(userID, nextChargeAt)).Scan(&payments); err != nil {
 		t.Fatalf("count payments: %v", err)
 	}
 	if payments != 0 {
-		t.Fatalf("payments = %d, ожидали 0", payments)
+		t.Fatalf("payments = %d, expected 0", payments)
 	}
 }
 
@@ -359,14 +359,14 @@ func TestRecurringWorker_NullPaymentMethodDoesNotCharge(t *testing.T) {
 		t.Fatalf("tickOnce: %v", err)
 	}
 	if calls != 0 {
-		t.Fatalf("external POST calls = %d, ожидали 0 при NULL payment_method_id", calls)
+		t.Fatalf("external POST calls = %d, expected 0 with NULL payment_method_id", calls)
 	}
 	var payments int
 	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE user_id = $1`, userID).Scan(&payments); err != nil {
 		t.Fatalf("count payments: %v", err)
 	}
 	if payments != 0 {
-		t.Fatalf("payments = %d, ожидали 0", payments)
+		t.Fatalf("payments = %d, expected 0", payments)
 	}
 	profile := recurringProfile(t, s, userID)
 	if profile.status != "active" || profile.lastError == nil {
@@ -415,7 +415,7 @@ func TestDueRecurringProfilesConcurrentClaimOnce(t *testing.T) {
 		claimed = append(claimed, got)
 	}
 	if len(claimed) != 1 || claimed[0] != userID {
-		t.Fatalf("claimed = %#v, ожидали один claim userID=%d", claimed, userID)
+		t.Fatalf("claimed = %#v, expected one claim userID=%d", claimed, userID)
 	}
 }
 
@@ -453,7 +453,7 @@ func TestFinalizeYookassaPayment_RenewsRecurringProfile(t *testing.T) {
 	}
 	subs := subRows(t, s, userID)
 	if len(subs) != 1 {
-		t.Fatalf("subscriptions count = %d, ожидали 1", len(subs))
+		t.Fatalf("subscriptions count = %d, expected 1", len(subs))
 	}
 	if !profile.nextChargeAt.Equal(subs[0].expires) {
 		t.Fatalf("next_charge_at = %v, subscription.expires_at = %v", profile.nextChargeAt, subs[0].expires)
@@ -529,14 +529,14 @@ func TestPaymentPoller_MarksRecurringCanceled(t *testing.T) {
 		t.Fatalf("profile after cancel = %#v", profile)
 	}
 	if !profile.nextChargeAt.After(time.Now()) {
-		t.Fatalf("next_charge_at = %v, ожидали retry позже", profile.nextChargeAt)
+		t.Fatalf("next_charge_at = %v, expected a later retry", profile.nextChargeAt)
 	}
 	activeAfter := subRows(t, s, userID)
 	if len(activeAfter) != 1 || !activeAfter[0].expires.Equal(activeBefore[0].expires) {
 		t.Fatalf("active subscription changed after recurring cancel: before=%#v after=%#v", activeBefore, activeAfter)
 	}
 	if len(notified) != 1 || notified[0] != userID {
-		t.Fatalf("notified = %#v, ожидали [%d]", notified, userID)
+		t.Fatalf("notified = %#v, expected [%d]", notified, userID)
 	}
 }
 
@@ -585,7 +585,7 @@ func TestPaymentPoller_BlocksRecurringPermissionRevoked(t *testing.T) {
 	var notified []string
 	poller := NewPaymentPoller(s, b, func(chatID int64, text string) error {
 		if chatID != userID {
-			t.Fatalf("notify chatID = %d, ожидали %d", chatID, userID)
+			t.Fatalf("notify chatID = %d, expected %d", chatID, userID)
 		}
 		notified = append(notified, text)
 		return nil
@@ -600,7 +600,7 @@ func TestPaymentPoller_BlocksRecurringPermissionRevoked(t *testing.T) {
 		t.Fatalf("profile after permission_revoked = %#v", profile)
 	}
 	if len(notified) != 1 || !strings.Contains(notified[0], "не будем повторять списание") {
-		t.Fatalf("notified = %#v, ожидали blocked message", notified)
+		t.Fatalf("notified = %#v, expected blocked message", notified)
 	}
 }
 

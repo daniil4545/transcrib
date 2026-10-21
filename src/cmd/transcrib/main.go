@@ -66,7 +66,7 @@ func run() error {
 		return err
 	}
 
-	// Контекст живёт до первого SIGINT/SIGTERM, по сигналу отменяется.
+	// The context lives until the first SIGINT/SIGTERM and is cancelled on the signal.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -85,29 +85,29 @@ func run() error {
 	storage := app.NewStorage(pool)
 	billing := app.NewBilling(cfg, storage)
 
-	// Строим реализации ВСЕХ сконфигуренных поставщиков (по наличию ключа), не только
-	// активного: external_job_id принадлежит пространству поставщика-создателя, поэтому
-	// повторная доставка и отмена в панели «Мои звонки» резолвят нужного по job.provider,
-	// а не по активному TRANSCRIPTION_PROVIDER (иначе после смены провайдера готовая
-	// джоба недоставляема — её id чужой текущему поставщику).
+	// Build implementations of ALL configured providers (by key presence), not only
+	// the active one: external_job_id belongs to the namespace of the provider that created it,
+	// so redelivery and cancellation in the "My calls" panel resolve the right one by job.provider,
+	// not by the active TRANSCRIPTION_PROVIDER (otherwise after a provider switch a finished
+	// job cannot be delivered: its id is foreign to the current provider).
 	providers := map[string]app.TranscriptionProvider{
-		// DoneAfterPolls: 1 — один тик Pending, потом Done; прогресс виден в логах.
+		// DoneAfterPolls: 1 - one Pending tick, then Done; progress is visible in the logs.
 		"mock": &app.MockProvider{DoneAfterPolls: 1},
 	}
 	if cfg.Speech2TextAPIKey != "" {
 		providers["speech2text"] = app.NewSpeech2Text(cfg.Speech2TextAPIKey, cfg.Speech2TextBaseURL)
 	}
 	if cfg.MymeetAPIKey != "" {
-		// LoadLocation здесь, не в LoadConfig: tzdata рантайм-зависима, ловим
-		// рядом с конструктором. Битый MYMEET_TIMEZONE = информативный отказ старта.
+		// LoadLocation is here, not in LoadConfig: tzdata is runtime-dependent, so we catch it
+		// next to the constructor. A bad MYMEET_TIMEZONE = an informative startup failure.
 		loc, err := time.LoadLocation(cfg.MymeetTimezone)
 		if err != nil {
 			return fmt.Errorf("load MYMEET_TIMEZONE %q: %w", cfg.MymeetTimezone, err)
 		}
 		providers["mymeet"] = app.NewMymeet(cfg.MymeetAPIKey, cfg.MymeetBaseURL, cfg.MymeetTemplate, loc)
 	}
-	// Активный (для новых джоб и оркестратора) — LoadConfig уже проверил, что ключ
-	// активного поставщика задан, значит он в мапе.
+	// The active one (for new jobs and the orchestrator): LoadConfig has already checked that the
+	// active provider's key is set, so it is in the map.
 	provider := providers[cfg.TranscriptionProvider]
 	slog.Info("startup configured",
 		"event", "startup_configured",
@@ -117,7 +117,7 @@ func run() error {
 		"providers_count", len(providers),
 	)
 
-	// Hot-swap провайдера саммари = строка SUMMARIZER_PROVIDER в .env.
+	// Hot-swapping the summary provider = the SUMMARIZER_PROVIDER line in .env.
 	var summarizer app.Summarizer
 	switch cfg.SummarizerProvider {
 	case "mock":
@@ -133,15 +133,15 @@ func run() error {
 
 	delivery := app.NewTelegramDelivery(bot)
 	orch := app.NewOrchestrator(storage, provider, delivery, summarizer, bot.SendText, bot.EditStatus, 30*time.Second, cfg.JobMaxAge, cfg.JobStartTimeout, cfg.JobSubmitMaxAttempts, cfg.TrialLimitMinutes)
-	// F9-пуши (notifier.go): суточная логика, 1ч-тик достаточно — отдельный конфиг
-	// был бы лишним (architecture.md §7.2).
+	// F9 pushes (notifier.go): daily logic, a 1h tick is enough; a separate config
+	// would be redundant (architecture.md §7.2).
 	notifier := app.NewNotifier(storage, bot.SendText, cfg.TrialLimitMinutes, time.Hour)
 	paymentPoller := app.NewPaymentPoller(storage, billing, bot.SendText, cfg.PaymentPollInterval)
 	recurringWorker := app.NewRecurringWorker(storage, billing, cfg.PaymentPollInterval, cfg.RecurringPaymentsEnabled)
 
-	// Оркестратор и notifier стартуют до bot.Start(): bot.Start() блокирует,
-	// поэтому горутины запускаем первыми. ctx отменяется по SIGINT/SIGTERM —
-	// обе завершатся по ctx.Done().
+	// The orchestrator and notifier start before bot.Start(): bot.Start() blocks,
+	// so the goroutines are started first. ctx is cancelled on SIGINT/SIGTERM;
+	// both exit on ctx.Done().
 	go orch.Run(ctx)
 	go notifier.Run(ctx)
 	go paymentPoller.Run(ctx)
@@ -156,15 +156,15 @@ func run() error {
 		}
 	}()
 
-	// По сигналу завершения останавливаем long polling — Start() разблокируется.
+	// On the shutdown signal, stop long polling so Start() unblocks.
 	go func() {
 		<-ctx.Done()
 		slog.Info("shutdown signal received", "event", "shutdown_signal", "phase", "shutdown")
 		bot.Stop()
 	}()
 
-	// Провайдер в стартовом логе: при hot-swap через .env первое, что нужно
-	// видеть — кто реально включён.
+	// Provider in the startup log: when hot-swapping via .env, the first thing to
+	// see is which one is actually enabled.
 	slog.Info("transcrib started", "event", "startup_complete", "phase", "startup", "provider", cfg.TranscriptionProvider, "summarizer", cfg.SummarizerProvider)
 	bot.Start()
 	stop()

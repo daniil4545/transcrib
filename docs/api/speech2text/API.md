@@ -1,60 +1,60 @@
-# Speech2Text API — единый справочник контракта
+# Speech2Text API: unified contract reference
 
-Канонический справочник по API Speech2Text для `transcrib`. Объединяет файловый flow, Meeting API (запись встречи через бота) и Webhook API в один документ.
+Canonical Speech2Text API reference for `transcrib`. It merges the file flow, the Meeting API (recording a meeting through a bot) and the Webhook API into one document.
 
-**Источник истины** — официальный контракт Speech2Text, сверенный 2026-06-10 и сжатый в этот справочник. Дополнительно: OpenAPI `https://api.speech2text.ru/openapi.json`, Python SDK `https://github.com/Speech2TextR/s2t-client-python`. Бизнес/юр/тарифы/риски — `docs/api/speech2text/README.md`.
+**Source of truth** is the official Speech2Text contract, reconciled on 2026-06-10 and condensed into this reference. Also: OpenAPI `https://api.speech2text.ru/openapi.json`, Python SDK `https://github.com/Speech2TextR/s2t-client-python`. Business/legal/pricing/risks: `docs/api/speech2text/README.md`.
 
-> **СТАТУС (2026-06-10):** Meeting API и Webhook API теперь **задокументированы официально** (в версии PDF от 03.06 их не было — была только наша реконструкция). Sales подтвердили доработку Meeting API (релиз сегодня-завтра). Контракт ниже — по PDF; **живая проверка эндпоинтов — на тестовом доступе при первой реализации `speech2text.go`**. Прошлый файл `API_actual.md` (только файловый flow) и прежний архивный `API.md` (ручная реконструкция Meeting API) слиты сюда.
+> **STATUS (2026-06-10):** the Meeting API and Webhook API are now **officially documented** (the 03.06 PDF version did not have them; there was only our reconstruction). Sales confirmed the Meeting API rework (release today or tomorrow). The contract below follows the PDF; **live verification of the endpoints happens on test access during the first implementation of `speech2text.go`**. The earlier file `API_actual.md` (file flow only) and the earlier archived `API.md` (manual reconstruction of the Meeting API) are merged here.
 
-## 0. Базовый URL, хосты, аутентификация
+## 0. Base URL, hosts, authentication
 
-- **Хост:** `https://api.speech2text.ru`.
-- ✅ **Расхождение хостов закрыто (живая проба 2026-06-11):** `POST /api/meetings/join` отвечает идентично на обоих хостах (`api.speech2text.ru` и `speech2text.ru`). Стандартизуем `api.speech2text.ru`.
-- ✅ **Ручки нашего flow существуют (живая проба 2026-06-11, без реальной встречи):** `meetings/join` (400 `meeting_url is required` на пустое тело), `recognitions/{id}`, `recognitions/{id}/result/txt`, `meetings/{id}/stop` — все отвечают валидацией, не 404-роутом. `GET /api/user/amounts` — 200 (на тестовом аккаунте 300 минут).
-- ⚠ **Формат ошибок (живой факт):** JSON `{"name","message","code","status"}`. «Задача не найдена» приходит как **HTTP 400** (не 404!) с `message: "Not found recognition task"` — у `recognitions/{id}`, `result/*` и `meetings/{id}/stop`. Парсинг ошибок не должен полагаться на 404.
-- ✅ **Ответы поддержки (2026-06-11):** штатное время «Очереди на запись» — **~10 минут** (дольше = инцидент); ограничений Meeting API на тестовом тарифе нет; **пароль встречи передавать отдельным полем `access_code`**, не в query `meeting_url` (Zoom `?pwd=` обязательно извлекать — реализовано в `speech2text.go`); `result/json` для meeting-задачи — тот же формат, что у файловой (сначала запись, потом расшифровка); **саммари в API не реализовано, только web-версия** (подтверждает решение отдельного `Summarizer`/OpenRouter для F3).
-- ✅ **Ответы поддержки (2026-06-19, те же 5 вопросов, что mymeet):** **concurrent/тариф** — референс-тариф «24 Часа» 17 600 ₽/мес: 24 ч/сут, **3 потока одновременно из коробки**, диаризация в цене, сверх лимита 0,40 ₽/мин (~24 ₽/ч), посекундно с 15-й сек; доп. поток +100 ₽ (на тест-аккаунте было 1 поток — не потолок тарифа); **`bot_name`** — участникам на встрече видно наше имя, подтвердили официально (из коробки); **саммари** — только веб, в API нет (своё через OpenRouter); **договор** — оферта или отдельный B2B на выбор, конфликта не заявили; **зависание ботов** — заявили исправленным: бот уходит, если в комнате никого нет 10 мин. 🔴 Живой тест 2026-06-22 провален (зомби: бот не вышел из постоянной Телемост-комнаты, `code 30` >20 мин); позднее s2t снова выбран как экономически целевой prod-путь под live-risk.
-- **Аутентификация** (на каждом запросе, два способа):
-  - `Authorization: Bearer YOUR-API-KEY` — универсальный (meeting и webhook в примерах используют только его).
-  - `?api-key=YOUR-API-KEY` в query — для `recognitions/*`.
-  - У `transcrib` стандартизуем на **Bearer** во всех вызовах.
-- **API-ключ** — в личном кабинете `https://api.speech2text.ru/profile-api`. Тарифы API — `https://speech2text.ru/rates-api`.
+- **Host:** `https://api.speech2text.ru`.
+- Confirmed: **host discrepancy closed (live probe 2026-06-11):** `POST /api/meetings/join` answers identically on both hosts (`api.speech2text.ru` and `speech2text.ru`). We standardize on `api.speech2text.ru`.
+- Confirmed: **the endpoints of our flow exist (live probe 2026-06-11, without a real meeting):** `meetings/join` (400 `meeting_url is required` on an empty body), `recognitions/{id}`, `recognitions/{id}/result/txt`, `meetings/{id}/stop` all answer with validation, not a 404 route. `GET /api/user/amounts` returns 200 (300 minutes on the test account).
+- Warning: **error format (live fact):** JSON `{"name","message","code","status"}`. "Task not found" arrives as **HTTP 400** (not 404!) with `message: "Not found recognition task"` for `recognitions/{id}`, `result/*` and `meetings/{id}/stop`. Error parsing must not rely on 404.
+- Confirmed: **support answers (2026-06-11):** the normal "Recording queue" time is **~10 minutes** (longer is an incident); there are no Meeting API restrictions on the test plan; **pass the meeting password in a separate `access_code` field**, not in the `meeting_url` query (a Zoom `?pwd=` must be extracted; implemented in `speech2text.go`); `result/json` for a meeting task has the same format as for a file task (recording first, then transcription); **summary is not implemented in the API, web version only** (confirms the decision to use a separate `Summarizer`/OpenRouter for F3).
+- Confirmed: **support answers (2026-06-19, the same 5 questions as for mymeet):** **concurrency/plan:** reference plan "24 Hours" 17,600 RUB/month: 24 h/day, **3 simultaneous streams out of the box**, diarization included, over the limit 0.40 RUB/min (~24 RUB/h), per second from the 15th second; an extra stream +100 RUB (the test account had 1 stream, which is not the plan ceiling); **`bot_name`:** meeting participants see our name, confirmed officially (out of the box); **summary:** web only, not in the API (our own through OpenRouter); **contract:** offer or a separate B2B at our choice, no conflict declared; **bots hanging:** declared fixed: the bot leaves if nobody is in the room for 10 min. CRITICAL: the live test of 2026-06-22 failed (zombie: the bot did not leave a persistent Telemost room, `code 30` for more than 20 min); later s2t was again chosen as the economically preferred prod path under live-risk.
+- **Authentication** (on every request, two ways):
+  - `Authorization: Bearer YOUR-API-KEY` is the universal one (the meeting and webhook examples use only this).
+  - `?api-key=YOUR-API-KEY` in the query is for `recognitions/*`.
+  - `transcrib` standardizes on **Bearer** in all calls.
+- **API key** is in the personal account at `https://api.speech2text.ru/profile-api`. API plans: `https://speech2text.ru/rates-api`.
 
-## 1. Flow для transcrib (Meeting → Poll → Fetch)
+## 1. Flow for transcrib (Meeting, Poll, Fetch)
 
-Целевой сценарий — запись онлайн-встречи. Файловый/link API (раздел 3) — для отладки и единичных случаев.
+The target scenario is recording an online meeting. The file/link API (section 3) is for debugging and one-off cases.
 
 ```
 Submit  -> POST /api/meetings/join                 -> external_id (id), status queued
 Poll    -> GET  /api/recognitions/{id}             -> status {code, value, description}
-Fetch   -> GET  /api/recognitions/{id}/result/{fmt}-> транскрипт (json / txt / docx)
-Stop    -> POST /api/meetings/{id}/stop            -> status cancelled (досрочно)
-Webhook -> push на наш URL при смене статуса        -> страховка/замена поллинга
+Fetch   -> GET  /api/recognitions/{id}/result/{fmt}-> transcript (json / txt / docx)
+Stop    -> POST /api/meetings/{id}/stop            -> status cancelled (early)
+Webhook -> push to our URL on status change         -> safety net / polling replacement
 ```
 
-Текущий runtime получает статус polling-first через `GET /api/recognitions/{id}` в `orchestrator.go`.
-Webhook `transcription.status_changed` остаётся future hardening для `web.go` (см. §6 и §11).
+The current runtime gets the status polling-first through `GET /api/recognitions/{id}` in `orchestrator.go`.
+The webhook `transcription.status_changed` remains future hardening for `web.go` (see §6 and §11).
 
-## 2. Meeting API — запись встречи через бота
+## 2. Meeting API: recording a meeting through a bot
 
-Бот заходит на конференцию по ссылке, записывает и автоматически транскрибирует.
+The bot joins the conference by link, records and transcribes automatically.
 
-### 2.1 Поддерживаемые платформы (8)
+### 2.1 Supported platforms (8)
 
-| Платформа | Хост |
+| Platform | Host |
 |---|---|
 | Zoom | `zoom.us` |
 | Google Meet | `meet.google.com` |
-| Яндекс Телемост | `telemost.yandex.ru` |
-| Сферум | `sferum.ru` |
+| Yandex Telemost | `telemost.yandex.ru` |
+| Sferum | `sferum.ru` |
 | MTS Link | `my.mts-link.ru` |
 | Bitrix24 | `bitrix24.ru/video/` |
 | BigBlueButton | `bigbluebutton.ru/` |
 | KTalk | `kontur.ru/talk` |
 
-Телемост закрыт — ключевое требование ТЗ выполнено. Нам критичны Zoom / Google Meet / Телемост.
+Telemost is covered: the key requirement of the spec is met. Zoom / Google Meet / Telemost are critical for us.
 
-### 2.2 Запустить бота
+### 2.2 Start the bot
 
 ```
 POST /api/meetings/join
@@ -62,16 +62,16 @@ Authorization: Bearer YOUR_API_KEY
 Content-Type: application/json
 ```
 
-| Параметр | Тип | Обяз. | Описание |
+| Parameter | Type | Req. | Description |
 |---|---|---|---|
-| `meeting_url` | string | да | Ссылка на встречу |
-| `title` | string | нет | Название встречи |
-| `lang` | string | нет | `ru`, `en`, ... По умолчанию — из настроек аккаунта |
-| `speakers` | int | нет | Количество спикеров (если известно) |
-| `bot_name` | string | нет | Имя бота в конференции |
-| `access_code` | string | нет | Пароль к встрече |
+| `meeting_url` | string | yes | Meeting link |
+| `title` | string | no | Meeting title |
+| `lang` | string | no | `ru`, `en`, ... Default: from the account settings |
+| `speakers` | int | no | Number of speakers (if known) |
+| `bot_name` | string | no | Bot name in the conference |
+| `access_code` | string | no | Meeting password |
 
-Ответ `201 Created`:
+Response `201 Created`:
 ```json
 {
   "id": "abc123def456",
@@ -84,67 +84,71 @@ Content-Type: application/json
 }
 ```
 
-Ошибки: `400` (`meeting_url` не указан / невалидный URL), `400` (платформа не поддерживается), `401` (неверный/отсутствует ключ).
+(The sample values `title` = "Call with the team" and `bot_name` = "Transcriber" are kept in Russian as in the provider's example.)
 
-### 2.3 Остановить бота досрочно
+Errors: `400` (`meeting_url` missing / invalid URL), `400` (platform not supported), `401` (invalid/missing key).
+
+### 2.3 Stop the bot early
 
 ```
 POST /api/meetings/{id}/stop
 Authorization: Bearer YOUR_API_KEY
 ```
 
-Останавливает бота досрочно. Ответ `200 OK` — объект задачи (живая проба отдавала статус `cancelled`).
+Stops the bot early. Response `200 OK` is the task object (the live probe returned status `cancelled`).
 
-Ошибки: `400` (задача не найдена / уже завершена / уже отменена), `401`, `403` (нет доступа к задаче).
+Errors: `400` (task not found / already finished / already cancelled), `401`, `403` (no access to the task).
 
-> Это закрывает прежний пробел «нет эндпоинта остановки бота».
+> This closes the earlier gap "no bot stop endpoint".
 
-> **🔴 РАЗВОРОТ КОНТРАКТА `/stop` (поддержка, 2026-06-17).** Поддержка уточнила семантику — это **досрочная финализация с транскриптом**, а НЕ чистая отмена, как считалось раньше:
-> 1. **Автовыход по таймауту НЕ отменяет задачу.** Даже на пустой встрече формируется результат: задача → `done`, транскрипт строится из записанного фрагмента. (Закрывает прежний открытый вопрос: автовыход даёт транскрипт.)
-> 2. **`/stop` на боте, который УЖЕ ведёт запись, финализирует фрагмент:** бот выходит из конференции, записанное уходит на транскрибацию. То есть `/stop` = досрочное завершение **с** транскриптом, не «отмена без результата».
-> 3. **Зависание `code 30` (бот не заходит, минуты не списываются) — подтверждённый баг s2t, в работе.** После фикса бот выходит автоматически ~за 10 мин, как заявлено.
+> **CRITICAL: REVERSAL OF THE `/stop` CONTRACT (support, 2026-06-17).** Support clarified the semantics: it is an **early finalization with a transcript**, NOT a pure cancellation as previously assumed:
+> 1. **Auto-exit on timeout does NOT cancel the task.** Even for an empty meeting a result is produced: the task moves to `done`, and the transcript is built from the recorded fragment. (This closes the earlier open question: auto-exit yields a transcript.)
+> 2. **`/stop` on a bot that is ALREADY recording finalizes the fragment:** the bot leaves the conference, and the recorded part goes to transcription. So `/stop` is an early completion **with** a transcript, not a "cancel without result".
+> 3. **The `code 30` hang (the bot does not join, minutes are not charged) is a confirmed s2t bug, in progress.** After the fix the bot leaves automatically after ~10 min, as declared.
 >
-> **Следствие для кода (обновлено 2026-07-03):** manual stop и watchdog stop для уже пишущей s2t-задачи больше не считаются refund-сценарием. Код ставит marker `manual_stop|watchdog_stop`, вызывает `/stop`, переводит Job в `processing` и ждёт результат. Если итоговый provider-статус после `/stop` приходит как `cancelled`, worker всё равно пробует `Fetch` только при stop-marker. Непустой transcript считается оказанной услугой и идёт в обычный terminal billing; пустой transcript или невозможность получить результат ведут в `failed` с возвратом резерва.
+> **Consequence for the code (updated 2026-07-03):** manual stop and watchdog stop for an s2t task that is already recording are no longer a refund scenario. The code sets the marker `manual_stop|watchdog_stop`, calls `/stop`, moves the Job to `processing` and waits for the result. If the final provider status after `/stop` arrives as `cancelled`, the worker still tries `Fetch`, but only with a stop marker. A non-empty transcript counts as a rendered service and goes into the normal terminal billing; an empty transcript or the impossibility to get the result leads to `failed` with the reserve refunded.
 
-### 2.4 Отслеживание статуса meeting-задачи
+### 2.4 Tracking the status of a meeting task
 
-Тот же эндпоинт, что и для файлов:
+The same endpoint as for files:
 ```
 GET /api/recognitions/{id}
 Authorization: Bearer YOUR_API_KEY
 ```
 
-Объект задачи (поля — см. §4). У встреч `resource.type = "link"`, `resource.url` = ссылка на встречу. `status` — объект `{code, value, description}`.
+Task object (fields: see §4). For meetings `resource.type = "link"`, `resource.url` = the meeting link. `status` is an object `{code, value, description}`.
 
-### 2.5 Статусы встречи (`status.value` / `status.code`)
+### 2.5 Meeting statuses (`status.value` / `status.code`)
 
-| value | code | Описание |
+The `description` strings are literal provider values and stay in Russian; the English meaning is given in the table.
+
+| value | code | Description |
 |---|---|---|
-| `queued` | 0 | Задание создано |
-| `queued` | 30 | Бот в очереди на запись (`description: "В очереди на запись"`, живой факт 2026-06-15) |
-| `queued` | 30 | Бот присоединился к встрече |
-| `queued` | 30 | Бот ведёт запись встречи |
-| `paused` | 102 | Приостановлено: лимит доступных минут исчерпан |
-| `done` | 200 | Распознавание прошло успешно |
-| `done` | 204 | Завершено: речь не обнаружена |
-| `error` | 404 | Бот не смог присоединиться к встрече |
-| `error` | 406 | Некорректный формат файла |
-| `error` | 407 | Превышен лимит длительности |
-| `error` | 501 | Ошибка при распознавании |
-| `error` | 502 | Ошибка загрузки из внешнего источника |
-| `cancelled` | — | Остановлено через `/stop` (§2.3) |
+| `queued` | 0 | Task created |
+| `queued` | 30 | Bot is in the recording queue (`description: "В очереди на запись"`, "In the recording queue", live fact 2026-06-15) |
+| `queued` | 30 | Bot has joined the meeting |
+| `queued` | 30 | Bot is recording the meeting |
+| `paused` | 102 | Paused: the available minutes limit is exhausted |
+| `done` | 200 | Recognition succeeded |
+| `done` | 204 | Finished: no speech detected |
+| `error` | 404 | Bot could not join the meeting |
+| `error` | 406 | Invalid file format |
+| `error` | 407 | Duration limit exceeded |
+| `error` | 501 | Recognition error |
+| `error` | 502 | Error loading from an external source |
+| `cancelled` | none | Stopped through `/stop` (§2.3) |
 
-`code` 30 повторяется для ТРЁХ под-состояний (в очереди на запись / присоединился / ведёт запись) — различать по `description`. Для нашего state machine: `queued/code=0` и `queued/code=30 "В очереди на запись"` → `Pending`/`joining`; `queued/code=30 "Бот присоединился..."` или `"Бот ведёт запись..."` → `OnCall`/`recording`; `done` → Fetch; `error`/`cancelled` → `failed_*`, кроме `cancelled` после нашего `/stop` с marker `manual_stop|watchdog_stop`: тогда сначала пробуем `Fetch`; `paused` → нехватка минут (см. §7). Незнакомый `description` при `code=30` считаем дрейфом контракта и оставляем как ошибку Poll, чтобы не показать ложную запись.
+`code` 30 is repeated for THREE sub-states (in the recording queue / joined / recording): distinguish them by `description`. For our state machine: `queued/code=0` and `queued/code=30 "В очереди на запись"` map to `Pending`/`joining`; `queued/code=30 "Бот присоединился..."` ("Bot has joined...") or `"Бот ведёт запись..."` ("Bot is recording...") map to `OnCall`/`recording`; `done` leads to Fetch; `error`/`cancelled` lead to `failed_*`, except `cancelled` after our `/stop` with the marker `manual_stop|watchdog_stop`: then we try `Fetch` first; `paused` means not enough minutes (see §7). An unknown `description` at `code=30` is treated as contract drift and left as a Poll error, so as not to show a false recording.
 
-> **Инцидент «зависшие воркеры записи» (повтор 2026-06-15, как 11 июня).** Задачи Телемоста застревали в `code 30 / "В очереди на запись"` и не двигались часами; `/api/user/amounts` показывал `used: 0` из 300 (бот не записал ни секунды) — бот ни разу не зашёл на встречу. Это НЕ наш баг и НЕ нехватка минут: s2t принимает задачу, но не диспатчит бота из очереди записи. 11 июня лечилось перезапуском воркеров на стороне s2t. Симптом для диагностики: задача висит `queued/30 "В очереди на запись"` + `amounts.used` не растёт. Live-примеры: `l80ndH2qLDNELXRNxDLwuSnYb-OmBDja`, ранее `_IN2JjDhnzJZqfDSIzYmjoBY3jQzwaT5`.
+> **Incident "stuck recording workers" (repeat on 2026-06-15, like 11 June).** Telemost tasks got stuck in `code 30 / "В очереди на запись"` and did not move for hours; `/api/user/amounts` showed `used: 0` of 300 (the bot did not record a second): the bot never joined the meeting. This is NOT our bug and NOT a lack of minutes: s2t accepts the task but does not dispatch the bot from the recording queue. On 11 June it was fixed by restarting workers on the s2t side. Diagnostic symptom: the task hangs in `queued/30 "В очереди на запись"` and `amounts.used` does not grow. Live examples: `l80ndH2qLDNELXRNxDLwuSnYb-OmBDja`, earlier `_IN2JjDhnzJZqfDSIzYmjoBY3jQzwaT5`.
 
-> **🔴 Инцидент «бот не выходит из постоянной комнаты» (LIVE 2026-06-17, признан s2t).** Отличен от «не зашёл»: здесь бот зашёл и пишет (`code 30 "Бот ведёт запись встречи"`, минуты идут), но после выхода юзера из Телемост-комнаты `/j/<id>` **не выходит сам** — комната постоянная, не закрывается, признака «встреча завершена» нет, и автовыход (§2.3 п.1) не срабатывает. Задача висит в `code 30` неограниченно; теперь её добивает наш watchdog (`JOB_MAX_AGE_HOURS`, от `created_at`): вызывает `POST /stop`, ждёт transcript и списывает фактическую duration при непустом результате; refund остаётся только для no-result. **s2t признали баг и обещали починить** (тикет 2026-06-17). Live-пример: задача `i57jv02UkZ3RnUo_t9rAP4UHxsgpdW6g` (Телемост, висела `code 30` после выхода юзера). Обходной путь до фикса — `POST /stop` финализирует с транскриптом (§2.3 п.2). Следствие: §2.3 п.1 «автовыход даёт `done`» **не покрывает постоянные комнаты**, которые не сигналят «завершено».
+> **CRITICAL: Incident "the bot does not leave a persistent room" (LIVE 2026-06-17, acknowledged by s2t).** Different from "did not join": here the bot joined and records (`code 30 "Бот ведёт запись встречи"`, minutes tick), but after the user leaves the Telemost room `/j/<id>` the bot **does not leave on its own**: the room is persistent, does not close, there is no "meeting ended" signal, and auto-exit (§2.3 item 1) does not trigger. The task hangs in `code 30` indefinitely; now our watchdog (`JOB_MAX_AGE_HOURS`, counted from `created_at`) finishes it: it calls `POST /stop`, waits for the transcript and charges the actual duration when the result is non-empty; a refund remains only for no-result. **s2t acknowledged the bug and promised a fix** (ticket 2026-06-17). Live example: task `i57jv02UkZ3RnUo_t9rAP4UHxsgpdW6g` (Telemost, hung in `code 30` after the user left). Workaround until the fix: `POST /stop` finalizes with a transcript (§2.3 item 2). Consequence: §2.3 item 1, "auto-exit yields `done`", **does not cover persistent rooms**, which do not signal "ended".
 
-> **🔴 Исторический инцидент — фикс не работал (LIVE 2026-06-22).** После заявленного s2t фикса автовыхода (2026-06-19: «бот уходит, если в комнате никого 10 мин») проведён живой ретест на проде: постоянная Телемост-комната, юзер завершил звонок -> задача зависла в `code 30 "Бот ведет запись встречи"`, `result: null` >20 мин (автовыход не сработал). Прямой `GET /api/recognitions/{id}` подтвердил. На тот момент prod был временно откатан на mymeet. zombie-risk закрывается нашим watchdog/stop-flow, а не доверием к автовыходу provider'а.
+> **CRITICAL: Historical incident, the fix did not work (LIVE 2026-06-22).** After the s2t-declared auto-exit fix (2026-06-19: "the bot leaves if nobody is in the room for 10 min") a live retest was run on prod: a persistent Telemost room, the user ended the call, and the task hung in `code 30 "Бот ведет запись встречи"`, `result: null` for more than 20 min (auto-exit did not trigger). A direct `GET /api/recognitions/{id}` confirmed it. At that point prod was temporarily rolled back to mymeet. The zombie risk is closed by our watchdog/stop flow, not by trusting the provider's auto-exit.
 
-### 2.6 Результат встречи
+### 2.6 Meeting result
 
-После `done` (code 200) в объекте задачи появляется `result` со ссылками на форматы:
+After `done` (code 200) the task object gets a `result` with links to the formats:
 ```json
 "result": {
   "raw":  ".../api/recognitions/{id}/result/raw",
@@ -153,41 +157,41 @@ Authorization: Bearer YOUR_API_KEY
   "json": ".../result/json", "xml": ".../result/xml"
 }
 ```
-Можно ходить по этим URL или напрямую `GET /api/recognitions/{id}/result/{format}` (§5).
+You can follow these URLs or call `GET /api/recognitions/{id}/result/{format}` directly (§5).
 
-**Срок доступности результата:** точный TTL в документации API не указан. В prod-инциденте
-2026-07-14 запрос результата примерно через 7 суток вернул HTTP 410 «время жизни результата
-истекло». Поэтому продуктовый контракт считает ссылки `result/*` доступными не дольше недели.
-Указанный в privacy policy срок до 90 календарных дней относится к обработке аудиоданных и не
-гарантирует доступность результата через API.
+**Result availability period:** the exact TTL is not stated in the API documentation. In the prod incident
+of 2026-07-14, a result request after about 7 days returned HTTP 410 ("the result lifetime
+has expired"). Therefore the product contract treats `result/*` links as available for no longer than a week.
+The period of up to 90 calendar days stated in the privacy policy refers to the processing of audio data and does not
+guarantee that the result is available through the API.
 
-Встреча с паролем: передать `access_code` при создании; иначе задача завершится `error`.
+For a meeting with a password: pass `access_code` at creation; otherwise the task ends with `error`.
 
-## 3. Файловый и link API (отладка / fallback)
+## 3. File and link API (debugging / fallback)
 
-В архитектуре transcrib почти не нужны (звонки приходят через Meeting API), но полезны для отладки и единичных загрузок.
+Almost not needed in the transcrib architecture (calls come through the Meeting API), but useful for debugging and one-off uploads.
 
-### 3.1 Загрузка файла
+### 3.1 File upload
 
 ```
 POST /api/recognitions/task/file
 Content-Type: multipart/form-data
 ```
 
-Поля: `file` (обяз.), `lang`, `speakers`, `min_speakers`/`max_speakers`, `multi_channel` (`1` — стерео, по каналу на спикера; обычно записи АТС).
+Fields: `file` (required), `lang`, `speakers`, `min_speakers`/`max_speakers`, `multi_channel` (`1` is stereo, one channel per speaker; usually PBX recordings).
 
-Допустимые расширения (расширенный список из нового PDF): `3gp, 3gpp, 7z, aac, adts, amr, avi, awb, caf, dav, f4v, flv, m4a, m4p, m4v, mkv, mov, mp3, mp4, mpeg, mpeg4, mpg, mpga, mts, mxf, oga, ogg, opus, rar, ts, wav, webm, wma, wmv, zip`.
+Allowed extensions (extended list from the new PDF): `3gp, 3gpp, 7z, aac, adts, amr, avi, awb, caf, dav, f4v, flv, m4a, m4p, m4v, mkv, mov, mp3, mp4, mpeg, mpeg4, mpg, mpga, mts, mxf, oga, ogg, opus, rar, ts, wav, webm, wma, wmv, zip`.
 
-### 3.2 Загрузка по ссылке
+### 3.2 Upload by link
 
 ```
 POST /api/recognitions/task/link
 Content-Type: application/json
 {"lang": "ru", "url": "https://example.com/audio.mp3"}
 ```
-Параметры те же. Поддерживаются и внешние источники (в примере PDF — YouTube Shorts).
+The parameters are the same. External sources are also supported (in the PDF example: YouTube Shorts).
 
-### 3.3 Объект задачи (ответ file/link)
+### 3.3 Task object (file/link response)
 
 ```json
 {
@@ -202,45 +206,45 @@ Content-Type: application/json
   "result": null
 }
 ```
-У link-задачи `resource.type = "link"`, `resource.url`, начальный `status.code` = 0 («Задание создано»). `file_meta` может быть `[]`, пока файл не обработан.
+(`description` "В очереди на распознание" means "In the recognition queue".) For a link task `resource.type = "link"`, `resource.url` is present, and the initial `status.code` = 0 ("Задание создано", "Task created"). `file_meta` can be `[]` until the file is processed.
 
-## 4. Проверка статуса и схема объекта задачи
+## 4. Status check and the task object schema
 
 ```
 GET /api/recognitions/{TASK-ID}
 ```
 
-Возвращает объект задачи. Описание полей:
+Returns the task object. Field descriptions:
 
-| Поле | Тип | Описание |
+| Field | Type | Description |
 |---|---|---|
-| `id` | string | Идентификатор задачи (хэш) |
-| `created` | string | Дата/время создания (UTC) |
-| `file_source_id` | int | Внутренний ID источника |
-| `options.lang` | string | Язык распознавания |
-| `options.speakers` | int\|null | Кол-во спикеров (null — авто) |
-| `options.multi_channel` | int | Многоканальный режим (0 — выкл) |
-| `file_meta` | object\|array | Метаданные файла (mime, format, channels, duration); `[]` пока не обработан |
-| `resource.type` | string | `file` или `link` (встречи — `link`) |
-| `resource.url` / `.name` | string | URL встречи / имя файла |
-| `status` | object | Текущий статус (см. ниже) |
-| `payment.source` | int | Источник оплаты: 1 — тарифный пакет, 2 — списание с лицевого счёта |
-| `payment.price` | float | Стоимость задачи |
-| `result` | object\|null | Ссылки на форматы результата (после `done`) |
+| `id` | string | Task identifier (hash) |
+| `created` | string | Creation date/time (UTC) |
+| `file_source_id` | int | Internal source ID |
+| `options.lang` | string | Recognition language |
+| `options.speakers` | int\|null | Number of speakers (null is auto) |
+| `options.multi_channel` | int | Multi-channel mode (0 is off) |
+| `file_meta` | object\|array | File metadata (mime, format, channels, duration); `[]` until processed |
+| `resource.type` | string | `file` or `link` (meetings are `link`) |
+| `resource.url` / `.name` | string | Meeting URL / file name |
+| `status` | object | Current status (see below) |
+| `payment.source` | int | Payment source: 1 is the plan package, 2 is a charge from the personal account |
+| `payment.price` | float | Task cost |
+| `result` | object\|null | Links to the result formats (after `done`) |
 
-**Числовые статусы файлового/link API** (поле `status.code`, без `value`):
+**Numeric statuses of the file/link API** (field `status.code`, without `value`):
 
-| code | Описание |
+| code | Description |
 |---|---|
-| 0 | Задание создано |
-| 80 | Контент получен |
-| 100 | Процесс распознавания / в очереди |
-| 200 | Распознавание прошло успешно |
-| 501 | Ошибка при распознавании |
+| 0 | Task created |
+| 80 | Content received |
+| 100 | Recognition in progress / queued |
+| 200 | Recognition succeeded |
+| 501 | Recognition error |
 
-У Meeting API `status` дополнительно содержит текстовый `value` (§2.5). Сводка соответствия — §9.
+In the Meeting API `status` additionally contains a text `value` (§2.5). The mapping summary is in §9.
 
-✅ **Живая форма объекта задачи (зафиксирована 2026-06-11, meeting-задача на Телемост):**
+Confirmed: **live shape of the task object (recorded 2026-06-11, a meeting task on Telemost):**
 ```json
 {"id":"J_aWF...","created":"2026-06-11 13:21:31","file_source_id":22627675,
  "options":{"lang":null,"speakers":null,"multi_channel":0},"file_meta":[],
@@ -248,19 +252,19 @@ GET /api/recognitions/{TASK-ID}
  "status":{"code":30,"value":"queued","description":"В очереди на запись"},
  "payment":{"source":1,"price":0},"result":null}
 ```
-Совпадает с таблицей выше. ⚠ Нюанс против PDF: `code 30` у живого API может означать «В очереди на запись» (бот ещё НЕ на встрече), а не «бот присоединился» из §2.5. Поэтому `speech2text.go` различает `code=30` по `description`: очередь остаётся `Pending`, присоединение/запись переходят в `OnCall`.
+It matches the table above. Warning: a nuance against the PDF: `code 30` in the live API may mean "В очереди на запись" ("In the recording queue"; the bot is NOT in the meeting yet) rather than "the bot joined" from §2.5. So `speech2text.go` distinguishes `code=30` by `description`: the queue stays `Pending`, joining/recording moves to `OnCall`.
 
-## 5. Получение результата
+## 5. Getting the result
 
 ```
 GET /api/recognitions/{TASK-ID}/result/{FORMAT}
 ```
 
-Форматы: `raw`, `txt`, `srt`, `vtt`, `json`, `xml`, `plain-txt`, `plain-txt-no-speaker`, `docx`.
+Formats: `raw`, `txt`, `srt`, `vtt`, `json`, `xml`, `plain-txt`, `plain-txt-no-speaker`, `docx`.
 
-Для transcrib основной — `json` (сегменты со спикерами и таймкодами) или `txt` (готовая строка «Спикер N: hh:mm:ss — текст»). Выбор формата для склейки в Google Doc / `.md` решаем при разработке `google.go`.
+For transcrib the main ones are `json` (segments with speakers and timecodes) or `txt` (a ready line "Спикер N: hh:mm:ss - text", where "Спикер N" means "Speaker N"). The format for assembling a Google Doc / `.md` is decided during the development of `google.go`.
 
-✅ **Структура `result/json` зафиксирована живым тестом 2026-06-11** (meeting-задача, Телемост; сырой ответ сохраняется в `jobs.raw_provider_response JSONB`):
+Confirmed: **the `result/json` structure was recorded by a live test on 2026-06-11** (meeting task, Telemost; the raw response is saved to `jobs.raw_provider_response JSONB`):
 ```json
 {
   "chunks":   [ {"text": "...", "time": {"from": 301.3, "to": 302.7}, "speaker": 4} ],
@@ -268,27 +272,27 @@ GET /api/recognitions/{TASK-ID}/result/{FORMAT}
   "languages": ["en"]
 }
 ```
-- `chunks[]` — сегменты: `text` (строка), `time.from`/`time.to` (секунды, float), `speaker` (int id → справочник `speakers`).
-- `speakers[]` — справочник: `id` + генерируемое имя «Спикер N» (реальных имён нет — подтверждает антискоуп `product.md` §6).
-- `languages[]` — определённые языки.
-- ⚠ Поля `confidence` нет. ⚠ На записи тишины ASR галлюцинирует короткие «You.»-сегменты с `languages: ["en"]` и плодит фантомных спикеров (8 «спикеров» на пустой встрече) — оценивать диаризацию можно только на реальной речи.
+- `chunks[]` are segments: `text` (string), `time.from`/`time.to` (seconds, float), `speaker` (int id referring to the `speakers` directory).
+- `speakers[]` is the directory: `id` plus a generated name "Спикер N" ("Speaker N"); there are no real names (confirms the anti-scope in `product.md` §6).
+- `languages[]` are the detected languages.
+- Warning: there is no `confidence` field. Warning: on a silent recording the ASR hallucinates short "You." segments with `languages: ["en"]` and produces phantom speakers (8 "speakers" in an empty meeting); diarization can be evaluated only on real speech.
 
 ## 6. Webhook API
 
-Базовый URL: `/api/webhook`. Авторизация: `Authorization: Bearer {api_key}`. Один клиент = один webhook.
+Base URL: `/api/webhook`. Authorization: `Authorization: Bearer {api_key}`. One client = one webhook.
 
-| Метод | Назначение |
+| Method | Purpose |
 |---|---|
-| `POST /api/webhook/create` | Создать. Тело: `url` (обяз.), `is_enabled` (по умолч. true), `events` (непустой массив) |
-| `GET /api/webhook/get` | Получить webhook текущего клиента |
-| `POST /api/webhook/update` | Обновить (любое подмножество полей) |
-| `POST /api/webhook/delete` | Удалить (тело не нужно) |
+| `POST /api/webhook/create` | Create. Body: `url` (required), `is_enabled` (default true), `events` (non-empty array) |
+| `GET /api/webhook/get` | Get the current client's webhook |
+| `POST /api/webhook/update` | Update (any subset of fields) |
+| `POST /api/webhook/delete` | Delete (no body needed) |
 
-Единственное событие: `transcription.status_changed` (при любой смене статуса).
+The only event: `transcription.status_changed` (on any status change).
 
-Ответ create/get/update — `{webhook_uid, url, is_enabled, events}`. Ошибки `400`: `URL is required`, `Invalid URL format`, `Events array is required and must not be empty`, `Webhook already exists`, `Client not found`, `Webhook not found`, `At least one field must be provided for update`, `URL cannot be empty`. Удалённый webhook можно создать заново, но нельзя обновить.
+The create/get/update response is `{webhook_uid, url, is_enabled, events}`. `400` errors: `URL is required`, `Invalid URL format`, `Events array is required and must not be empty`, `Webhook already exists`, `Client not found`, `Webhook not found`, `At least one field must be provided for update`, `URL cannot be empty`. A deleted webhook can be created again but cannot be updated.
 
-### 6.1 Входящий payload (Speech2Text → наш URL)
+### 6.1 Incoming payload (Speech2Text to our URL)
 
 ```json
 {
@@ -305,90 +309,90 @@ GET /api/recognitions/{TASK-ID}/result/{FORMAT}
 }
 ```
 
-`transcription.status` — текстовые статусы: `created`, `processing`, `paused`, `done`, `error`, `deleted`.
+`transcription.status` holds text statuses: `created`, `processing`, `paused`, `done`, `error`, `deleted`.
 
-> **Важно (закрыт старый вопрос):** в PDF явно — `secret_token` «будет подставлен **ваш ключ доступа к API**». То есть отдельного секрета нет: сравниваем пришедший `secret_token` со своим API-ключом (constant-time, `subtle.ConstantTimeCompare`), не совпал — `403`. TLS обязателен через текущий nginx edge. Это слабее HMAC: токен в payload — кто его узнал, может слать поддельные события. Хранить рядом с секретами.
+> **Important (an old question is closed):** the PDF states explicitly that `secret_token` "will be filled in with **your API access key**". So there is no separate secret: we compare the incoming `secret_token` with our own API key (constant-time, `subtle.ConstantTimeCompare`), and on mismatch return `403`. TLS is mandatory through the current nginx edge. This is weaker than HMAC: the token is in the payload, and anyone who learns it can send forged events. Store it next to the secrets.
 
-### 6.2 Ретраи и обработка
+### 6.2 Retries and handling
 
-Наш endpoint должен вернуть HTTP 2xx. Иначе — ретраи: через 5 / 10 / 15 / 20 минут, 5-я попытка финальная → статус доставки `failed`.
+Our endpoint must return HTTP 2xx. Otherwise there are retries: after 5 / 10 / 15 / 20 minutes, the 5th attempt is final and the delivery status becomes `failed`.
 
-Следствие для архитектуры: handler идемпотентен (одно событие до 5 раз); quick-ack (парсим → валидируем `secret_token` → пишем в БД-очередь → 200); поллинг-страховка в `orchestrator.go` добивает статус через `GET /api/recognitions/{id}`, если webhook не дошёл.
+Consequence for the architecture: the handler is idempotent (one event up to 5 times); quick-ack (parse, validate `secret_token`, write to the DB queue, 200); the polling safety net in `orchestrator.go` finishes the status through `GET /api/recognitions/{id}` if the webhook did not arrive.
 
-## 7. Лимиты минут и оплата с лицевого счёта
+## 7. Minute limits and payment from the personal account
 
 ```
 GET /api/user/amounts
 ```
-Ответ: `{"minutes": {"available": 360, "used": 0}, "amount": 0}` — остаток минут по тарифу и баланс лицевого счёта.
+Response: `{"minutes": {"available": 360, "used": 0}, "amount": 0}`: the remaining plan minutes and the personal account balance.
 
-При нехватке минут задача переходит в `paused` (code 102). Тогда — оплата с лицевого счёта:
+When minutes run out, the task moves to `paused` (code 102). Then payment from the personal account:
 ```
 GET   /api/recognitions/{TASK-ID}/price   # {"duration":1.9,"pricePerMinute":0.4,"price":0.76}
-PATCH /api/recognitions/{TASK-ID}/pay     # списать и возобновить
+PATCH /api/recognitions/{TASK-ID}/pay     # charge and resume
 ```
 
-`pricePerMinute` в примере PDF — `0.4 ₽/мин` (вероятно ставка тестового доступа; боевая — по тарифу `rates-api`). Следствие: `billing.go` прогнозирует исчерпание квоты через `/user/amounts`; на `paused` — либо подложить деньги на лицевой счёт, либо остановить Job с понятной ошибкой.
+`pricePerMinute` in the PDF example is `0.4 RUB/min` (probably the test access rate; the production one follows the `rates-api` plan). Consequence: `billing.go` forecasts quota exhaustion through `/user/amounts`; on `paused` it either tops up the personal account or stops the Job with a clear error.
 
-## 8. Удаление и список задач
+## 8. Deletion and task list
 
 ```
 DELETE /api/recognitions/{TASK-ID}
 ```
-⚠ Только пока задача **в очереди**, не в работе. После `processing`/`done` программно стереть аудио/транскрипт нельзя.
+Warning: only while the task is **queued**, not in progress. After `processing`/`done` the audio/transcript cannot be erased programmatically.
 
-Следствие для 152-ФЗ: «удаляем аудио после успеха» автоматически не выполняется. Либо просим у поддержки отдельный эндпоинт удаления после `done`, либо учитываем, что privacy policy допускает обработку аудиоданных до 90 календарных дней. Этот срок не гарантирует доступность результата через API; продуктовый TTL результата описан в §2.6.
+Consequence for 152-FZ: "delete the audio after success" is not performed automatically. Either we ask support for a separate deletion endpoint after `done`, or we account for the fact that the privacy policy allows processing of audio data for up to 90 calendar days. This period does not guarantee result availability through the API; the product result TTL is described in §2.6.
 
 ```
-GET /api/recognitions?page=PAGE&per-page=LIMIT   # page≥1, per-page 10..1000 (умолч. 50)
+GET /api/recognitions?page=PAGE&per-page=LIMIT   # page>=1, per-page 10..1000 (default 50)
 GET /api/recognitions/processing | /complete | /errors
 ```
-Нужны в основном для админ-скриптов; production-state хранится у нас в Postgres.
+Needed mostly for admin scripts; production state is stored in our Postgres.
 
-## 9. Сводка статусов (file vs meeting)
+## 9. Status summary (file vs meeting)
 
-| Числовой (file, `status.code`) | Текстовый (meeting, `status.value`) | Смысл |
+| Numeric (file, `status.code`) | Text (meeting, `status.value`) | Meaning |
 |---|---|---|
-| 0 | `queued` (0) | Задание создано |
-| 80 | — | Контент получен |
-| 100 | `queued` (30) | В обработке / бот присоединился / ведёт запись |
-| 200 | `done` (200) | Успешно |
-| — | `done` (204) | Завершено, речь не обнаружена |
-| 501 | `error` (501) | Ошибка распознавания |
-| — | `error` (404/406/407/502) | Не присоединился / формат / лимит длительности / загрузка из источника |
-| — | `paused` (102) | Нехватка минут |
-| — | `cancelled` | Остановлено через `/stop` |
+| 0 | `queued` (0) | Task created |
+| 80 | none | Content received |
+| 100 | `queued` (30) | Processing / bot joined / recording |
+| 200 | `done` (200) | Success |
+| none | `done` (204) | Finished, no speech detected |
+| 501 | `error` (501) | Recognition error |
+| none | `error` (404/406/407/502) | Did not join / format / duration limit / loading from source |
+| none | `paused` (102) | Not enough minutes |
+| none | `cancelled` | Stopped through `/stop` |
 
-Webhook отдаёт текстовые статусы (`created`/`processing`/`paused`/`done`/`error`/`deleted`). Точное соответствие числовых и текстовых кодов — подтвердить эмпирически при первой реализации.
+The webhook delivers text statuses (`created`/`processing`/`paused`/`done`/`error`/`deleted`). The exact mapping of numeric to text codes is to be confirmed empirically during the first implementation.
 
-## 10. Что НЕ покрыто документацией (follow-up к поддержке)
+## 10. What the documentation does NOT cover (follow-up to support)
 
-Большинство прежних пробелов закрыто новым PDF (stop-эндпоинт, статусы, secret_token, схемы ответов). Осталось:
+Most of the earlier gaps are closed by the new PDF (stop endpoint, statuses, secret_token, response schemas). What remains:
 
-- **Внутренняя структура `result/json`** (поля сегментов: спикер, текст, таймкоды, confidence) — узнаём живым тестом.
-- **Удаление задачи после `done`** (для 152-ФЗ) — `DELETE` работает только в очереди.
-- **Таймаут одиночества бота** на встрече, поведение в waiting room.
-- **Эндпоинт «бот сейчас на встрече или нет»** — отдельного нет, но статус `queued`/30 «ведёт запись» это покрывает.
-- **Лимит одновременных потоков** сверх тарифа — на уровне тарифа, не API.
-- **SLA, DPA, изоляция данных между клиентами** (после инцидента в отзывах — `README.md`, раздел «Юридическая часть»).
-- **Расхождение хоста** `api.speech2text.ru` vs `speech2text.ru` в meeting/webhook (§0).
+- **Internal structure of `result/json`** (segment fields: speaker, text, timecodes, confidence): to be learned by a live test.
+- **Deleting a task after `done`** (for 152-FZ): `DELETE` works only while queued.
+- **The bot's alone-in-room timeout** in a meeting, behavior in a waiting room.
+- **An endpoint "is the bot in the meeting now"**: there is none, but the status `queued`/30 "recording" covers it.
+- **Limit of simultaneous streams** above the plan: at the plan level, not in the API.
+- **SLA, DPA, data isolation between customers** (after the incident in reviews: `README.md`, section "Legal").
+- **Host discrepancy** `api.speech2text.ru` vs `speech2text.ru` in meeting/webhook (§0).
 
-## 11. Эскиз speech2text.go (резервная реализация)
+## 11. Sketch of speech2text.go (backup implementation)
 
-Реализует `TranscriptionProvider` (`internal/app/transcription.go`). Speech2Text — экономически целевой поставщик и текущий prod/dev provider; live-risk постоянных комнат закрывается нашим watchdog/stop-flow. `mymeet.go` остаётся рабочим fallback за тем же интерфейсом. На walking-skeleton реальный провайдер заменяется `mock.go` (`TRANSCRIPTION_PROVIDER=mock`).
+Implements `TranscriptionProvider` (`internal/app/transcription.go`). Speech2Text is the economically preferred provider and the current prod/dev provider; the live-risk of persistent rooms is closed by our watchdog/stop flow. `mymeet.go` stays the working fallback behind the same interface. In the walking skeleton the real provider is replaced by `mock.go` (`TRANSCRIPTION_PROVIDER=mock`).
 
 ```
 Submit(ctx, job)        -> POST /api/meetings/join                 -> external_id (id)
-Poll(ctx, externalID)   -> GET  /api/recognitions/{id}             -> status.value -> наш Status
-Fetch(ctx, externalID)  -> GET  /api/recognitions/{id}/result/json -> транскрипт + спикеры
-Cancel(ctx, externalID) -> POST /api/meetings/{id}/stop            -> финализация фрагмента с транскриптом (§2.3; billable при непустом transcript)
-EnsureWebhook(ctx, url) -> get -> create/update (идемпотентно)
-Amounts(ctx)            -> GET  /api/user/amounts                  -> прогноз квоты
+Poll(ctx, externalID)   -> GET  /api/recognitions/{id}             -> status.value -> our Status
+Fetch(ctx, externalID)  -> GET  /api/recognitions/{id}/result/json -> transcript + speakers
+Cancel(ctx, externalID) -> POST /api/meetings/{id}/stop            -> fragment finalization with a transcript (§2.3; billable if the transcript is non-empty)
+EnsureWebhook(ctx, url) -> get -> create/update (idempotent)
+Amounts(ctx)            -> GET  /api/user/amounts                  -> quota forecast
 ```
-`domain.Job`: `ExternalJobID` (id S2T), `Status` (маппинг их статусов в наш state machine); пароль встречи (`access_code`) извлекается из query-параметра `pwd` ссылки через `meetingAccessCode` — отдельного поля `MeetingPassword` в `Job` нет.
+`domain.Job`: `ExternalJobID` (S2T id), `Status` (mapping of their statuses into our state machine); the meeting password (`access_code`) is extracted from the `pwd` query parameter of the link through `meetingAccessCode`; there is no separate `MeetingPassword` field in `Job`.
 
-> **Статус реализации:** в `speech2text.go` реализованы только `Submit`/`Poll`/`Fetch`/`Cancel` (текущий интерфейс `TranscriptionProvider`). `EnsureWebhook`/`Amounts` из эскиза выше — **НЕ реализованы** (webhook-приём §6 и прогноз квоты §7 = план Этап 3, `web.go` пока нет).
+> **Implementation status:** `speech2text.go` implements only `Submit`/`Poll`/`Fetch`/`Cancel` (the current `TranscriptionProvider` interface). `EnsureWebhook`/`Amounts` from the sketch above are **NOT implemented** (webhook intake §6 and quota forecast §7 are the Stage 3 plan; `web.go` does not exist yet).
 
-## 12. Примеры кода
+## 12. Code examples
 
-В PDF — готовые примеры на PHP / Python / JavaScript для файлового flow (стр. 22-24). Для Go нужны как референс контракта, не как код. Официальный Python SDK: `https://github.com/Speech2TextR/s2t-client-python`. Коды языков для `lang` — Приложение 1 в PDF.
+The PDF has ready examples in PHP / Python / JavaScript for the file flow (pp. 22-24). For Go they are needed as a contract reference, not as code. Official Python SDK: `https://github.com/Speech2TextR/s2t-client-python`. Language codes for `lang`: Appendix 1 in the PDF.

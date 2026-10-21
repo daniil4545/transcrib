@@ -19,7 +19,7 @@ func TestPaymentEmail_RoundTrip(t *testing.T) {
 		t.Fatalf("PaymentEmail empty: %v", err)
 	}
 	if email != "" {
-		t.Fatalf("PaymentEmail empty = %q, ожидали пустую строку", email)
+		t.Fatalf("PaymentEmail empty = %q, expected an empty string", email)
 	}
 
 	if err := s.SetPaymentEmail(ctx, userID, "user@example.com"); err != nil {
@@ -30,7 +30,7 @@ func TestPaymentEmail_RoundTrip(t *testing.T) {
 		t.Fatalf("PaymentEmail saved: %v", err)
 	}
 	if email != "user@example.com" {
-		t.Fatalf("PaymentEmail = %q, ожидали user@example.com", email)
+		t.Fatalf("PaymentEmail = %q, expected user@example.com", email)
 	}
 }
 
@@ -63,7 +63,7 @@ func TestCreatePendingPayment_IdempotentByIntentAndProvider(t *testing.T) {
 		t.Fatalf("count payments: %v", err)
 	}
 	if count != 1 {
-		t.Fatalf("payments count = %d, ожидали 1", count)
+		t.Fatalf("payments count = %d, expected 1", count)
 	}
 
 	_, err := s.pool.Exec(ctx,
@@ -82,15 +82,15 @@ func TestCreatePendingPayment_IdempotentByIntentAndProvider(t *testing.T) {
 		if p.UserID == userID {
 			found = true
 			if p.ProviderPaymentChargeID == nil || *p.ProviderPaymentChargeID != "yk-pending-1" {
-				t.Fatalf("provider_payment_charge_id = %v, ожидали yk-pending-1", p.ProviderPaymentChargeID)
+				t.Fatalf("provider_payment_charge_id = %v, expected yk-pending-1", p.ProviderPaymentChargeID)
 			}
 			if p.PaymentIntentKey == nil || *p.PaymentIntentKey != "intent-1" {
-				t.Fatalf("payment_intent_key = %v, ожидали intent-1", p.PaymentIntentKey)
+				t.Fatalf("payment_intent_key = %v, expected intent-1", p.PaymentIntentKey)
 			}
 		}
 	}
 	if !found {
-		t.Fatal("PendingPayments не вернул созданный pending payment")
+		t.Fatal("PendingPayments did not return the created pending payment")
 	}
 }
 
@@ -106,7 +106,7 @@ func TestHasFreshPendingPayment_DirectOnly(t *testing.T) {
 		t.Fatalf("HasFreshPendingPayment empty: %v", err)
 	}
 	if exists {
-		t.Fatal("fresh pending exists без платежей")
+		t.Fatal("fresh pending exists with no payments")
 	}
 
 	recurring := PaymentInput{
@@ -124,7 +124,7 @@ func TestHasFreshPendingPayment_DirectOnly(t *testing.T) {
 		t.Fatalf("HasFreshPendingPayment recurring: %v", err)
 	}
 	if exists {
-		t.Fatal("recurring pending не должен блокировать direct payment link")
+		t.Fatal("recurring pending must not block a direct payment link")
 	}
 
 	direct := PaymentInput{
@@ -142,7 +142,7 @@ func TestHasFreshPendingPayment_DirectOnly(t *testing.T) {
 		t.Fatalf("HasFreshPendingPayment direct: %v", err)
 	}
 	if !exists {
-		t.Fatal("fresh direct pending не найден")
+		t.Fatal("fresh direct pending not found")
 	}
 
 	if _, err := s.pool.Exec(ctx,
@@ -157,7 +157,7 @@ func TestHasFreshPendingPayment_DirectOnly(t *testing.T) {
 		t.Fatalf("HasFreshPendingPayment old direct: %v", err)
 	}
 	if exists {
-		t.Fatal("old direct pending не должен считаться свежим")
+		t.Fatal("old direct pending must not be considered fresh")
 	}
 }
 
@@ -200,7 +200,7 @@ func TestStartDirectPaymentIntent_ConcurrentSameUser(t *testing.T) {
 		}
 	}
 	if createdCount != 1 {
-		t.Fatalf("created direct intents = %d, ожидали 1", createdCount)
+		t.Fatalf("created direct intents = %d, expected 1", createdCount)
 	}
 
 	var idemKey string
@@ -214,7 +214,7 @@ func TestStartDirectPaymentIntent_ConcurrentSameUser(t *testing.T) {
 		t.Fatalf("select direct intent: %v", err)
 	}
 	if providerID != nil {
-		t.Fatalf("provider_payment_charge_id = %q, ожидали NULL до attach", *providerID)
+		t.Fatalf("provider_payment_charge_id = %q, expected NULL before attach", *providerID)
 	}
 
 	payment := YookassaPayment{
@@ -239,7 +239,7 @@ func TestStartDirectPaymentIntent_ConcurrentSameUser(t *testing.T) {
 		t.Fatalf("count attached direct intent: %v", err)
 	}
 	if count != 1 {
-		t.Fatalf("attached direct payments = %d, ожидали 1", count)
+		t.Fatalf("attached direct payments = %d, expected 1", count)
 	}
 }
 
@@ -263,19 +263,19 @@ func TestCreatePendingPayment_ConflictMismatch(t *testing.T) {
 	sameProvider := in
 	sameProvider.IntentKey = "intent-conflict-2"
 	if err := s.CreatePendingPayment(ctx, sameProvider, sameProvider.IntentKey, "user@example.com"); err == nil {
-		t.Fatal("CreatePendingPayment same provider with different intent: err=nil, ожидали ошибку")
+		t.Fatal("CreatePendingPayment same provider with different intent: err=nil, expected an error")
 	}
 
 	sameIntent := in
 	sameIntent.ProviderChargeID = "yk-conflict-2"
 	if err := s.CreatePendingPayment(ctx, sameIntent, sameIntent.IntentKey, "user@example.com"); err == nil {
-		t.Fatal("CreatePendingPayment same intent with different provider: err=nil, ожидали ошибку")
+		t.Fatal("CreatePendingPayment same intent with different provider: err=nil, expected an error")
 	}
 
 	mismatchedInput := in
 	mismatchedInput.IntentKey = "intent-from-input"
 	if err := s.CreatePendingPayment(ctx, mismatchedInput, "intent-from-arg", "user@example.com"); err == nil {
-		t.Fatal("CreatePendingPayment mismatched input/arg intent: err=nil, ожидали ошибку")
+		t.Fatal("CreatePendingPayment mismatched input/arg intent: err=nil, expected an error")
 	}
 }
 
@@ -303,10 +303,10 @@ func TestFinalizeYookassaPayment_Idempotent(t *testing.T) {
 		t.Fatalf("FinalizeYookassaPayment #1: %v", err)
 	}
 	if !activation.Changed {
-		t.Fatal("FinalizeYookassaPayment #1 changed=false, ожидали true")
+		t.Fatal("FinalizeYookassaPayment #1 changed=false, expected true")
 	}
 	if activation.UserID != userID {
-		t.Fatalf("FinalizeYookassaPayment userID = %d, ожидали %d", activation.UserID, userID)
+		t.Fatalf("FinalizeYookassaPayment userID = %d, expected %d", activation.UserID, userID)
 	}
 
 	activation, err = s.FinalizeYookassaPayment(ctx, "yk-finalize-1", json.RawMessage(`{"status":"succeeded"}`), &providerPaidAt, 900, "", false)
@@ -314,35 +314,35 @@ func TestFinalizeYookassaPayment_Idempotent(t *testing.T) {
 		t.Fatalf("FinalizeYookassaPayment #2: %v", err)
 	}
 	if activation.Changed {
-		t.Fatal("FinalizeYookassaPayment #2 changed=true, ожидали false")
+		t.Fatal("FinalizeYookassaPayment #2 changed=true, expected false")
 	}
 	if activation.UserID != userID {
-		t.Fatalf("FinalizeYookassaPayment #2 userID = %d, ожидали %d", activation.UserID, userID)
+		t.Fatalf("FinalizeYookassaPayment #2 userID = %d, expected %d", activation.UserID, userID)
 	}
 
 	pays := paymentRows(t, s, userID)
 	if len(pays) != 1 {
-		t.Fatalf("payments count = %d, ожидали 1", len(pays))
+		t.Fatalf("payments count = %d, expected 1", len(pays))
 	}
 	if pays[0].status != "succeeded" {
-		t.Fatalf("payment.status = %q, ожидали succeeded", pays[0].status)
+		t.Fatalf("payment.status = %q, expected succeeded", pays[0].status)
 	}
 	if pays[0].subID == nil {
-		t.Fatal("payment.subscription_id = NULL, ожидали линковку")
+		t.Fatal("payment.subscription_id = NULL, expected a link")
 	}
 
 	subs := subRows(t, s, userID)
 	if len(subs) != 1 {
-		t.Fatalf("subscriptions count = %d, ожидали 1", len(subs))
+		t.Fatalf("subscriptions count = %d, expected 1", len(subs))
 	}
 	if *pays[0].subID != subs[0].id {
-		t.Fatalf("payment.subscription_id = %d, ожидали %d", *pays[0].subID, subs[0].id)
+		t.Fatalf("payment.subscription_id = %d, expected %d", *pays[0].subID, subs[0].id)
 	}
 	if subs[0].minutesLimit != 900 || subs[0].minutesBalance != 900 {
-		t.Fatalf("subscription minutes = %d/%d, ожидали 900/900", subs[0].minutesBalance, subs[0].minutesLimit)
+		t.Fatalf("subscription minutes = %d/%d, expected 900/900", subs[0].minutesBalance, subs[0].minutesLimit)
 	}
 	if subs[0].meetingsLimit != 15 || subs[0].meetingsBalance != 15 {
-		t.Fatalf("legacy meetings = %d/%d, ожидали 15/15", subs[0].meetingsBalance, subs[0].meetingsLimit)
+		t.Fatalf("legacy meetings = %d/%d, expected 15/15", subs[0].meetingsBalance, subs[0].meetingsLimit)
 	}
 }
 
@@ -379,8 +379,8 @@ func TestFinalizeYookassaPayment_RecurringProfileOptInGuard(t *testing.T) {
 				Currency:         "RUB",
 				ProviderChargeID: providerID,
 				IntentKey:        "intent-" + providerID,
-				// auto_renew хранится в локальной metadata при создании платежа
-				// (как paymentLinkMetadata в проде); finalize читает opt-in отсюда.
+				// auto_renew is stored in local metadata when the payment is created
+				// (like paymentLinkMetadata in production); finalize reads the opt-in from here.
 				Metadata:   json.RawMessage(metadata),
 				RawPayload: json.RawMessage(`{"status":"pending"}`),
 			}
@@ -402,27 +402,27 @@ func TestFinalizeYookassaPayment_RecurringProfileOptInGuard(t *testing.T) {
 				t.Fatalf("FinalizeYookassaPayment: %v", err)
 			}
 			if !activation.Changed {
-				t.Fatal("FinalizeYookassaPayment changed=false, ожидали true")
+				t.Fatal("FinalizeYookassaPayment changed=false, expected true")
 			}
 			if activation.UserID != userID {
-				t.Fatalf("FinalizeYookassaPayment userID = %d, ожидали %d", activation.UserID, userID)
+				t.Fatalf("FinalizeYookassaPayment userID = %d, expected %d", activation.UserID, userID)
 			}
 
 			gotMethodID := paymentMethodID(t, s, userID)
 			if c.wantProfile {
 				if gotMethodID == nil || *gotMethodID != methodID {
-					t.Fatalf("payments.payment_method_id = %v, ожидали %q", gotMethodID, methodID)
+					t.Fatalf("payments.payment_method_id = %v, expected %q", gotMethodID, methodID)
 				}
 			} else if gotMethodID != nil {
-				t.Fatalf("payments.payment_method_id = %v, ожидали NULL без auto_renew/saved", *gotMethodID)
+				t.Fatalf("payments.payment_method_id = %v, expected NULL without auto_renew/saved", *gotMethodID)
 			}
 
 			profiles := recurringProfileCount(t, s, userID, methodID)
 			if c.wantProfile && profiles != 1 {
-				t.Fatalf("recurring_profiles count = %d, ожидали 1", profiles)
+				t.Fatalf("recurring_profiles count = %d, expected 1", profiles)
 			}
 			if !c.wantProfile && profiles != 0 {
-				t.Fatalf("recurring_profiles count = %d, ожидали 0", profiles)
+				t.Fatalf("recurring_profiles count = %d, expected 0", profiles)
 			}
 		})
 	}
@@ -467,16 +467,16 @@ func TestFinalizeYookassaPayment_RecurringUsesEffectiveExpiry(t *testing.T) {
 		t.Fatalf("FinalizeYookassaPayment: %v", err)
 	}
 	if !activation.Changed || !activation.RecurringActive {
-		t.Fatalf("activation = %#v, ожидали changed recurring active", activation)
+		t.Fatalf("activation = %#v, expected changed recurring active", activation)
 	}
 	if !activation.ExpiresAt.Equal(effectiveExpires) || !activation.NextChargeAt.Equal(effectiveExpires) {
-		t.Fatalf("activation dates = expires %v next %v, ожидали effective %v",
+		t.Fatalf("activation dates = expires %v next %v, expected effective %v",
 			activation.ExpiresAt, activation.NextChargeAt, effectiveExpires)
 	}
 
 	profile := recurringProfile(t, s, userID)
 	if profile.status != "active" || !profile.nextChargeAt.Equal(effectiveExpires) {
-		t.Fatalf("profile = %#v, ожидали active next_charge_at=%v", profile, effectiveExpires)
+		t.Fatalf("profile = %#v, expected active next_charge_at=%v", profile, effectiveExpires)
 	}
 	bal, err := s.Balance(ctx, userID, 180)
 	if err != nil {
@@ -555,14 +555,14 @@ func TestDisableRecurring_ChangedBool(t *testing.T) {
 		t.Fatalf("DisableRecurring #1: %v", err)
 	}
 	if !changed {
-		t.Fatal("DisableRecurring #1 changed=false, ожидали true")
+		t.Fatal("DisableRecurring #1 changed=false, expected true")
 	}
 	profile := recurringProfile(t, s, userID)
 	if profile.status != "disabled" {
-		t.Fatalf("profile.status = %q, ожидали disabled", profile.status)
+		t.Fatalf("profile.status = %q, expected disabled", profile.status)
 	}
 	if methodID := recurringProfilePaymentMethodID(t, s, userID); methodID != nil {
-		t.Fatalf("payment_method_id = %q, ожидали NULL после disable", *methodID)
+		t.Fatalf("payment_method_id = %q, expected NULL after disable", *methodID)
 	}
 
 	changed, err = s.DisableRecurring(ctx, userID)
@@ -570,7 +570,7 @@ func TestDisableRecurring_ChangedBool(t *testing.T) {
 		t.Fatalf("DisableRecurring #2: %v", err)
 	}
 	if changed {
-		t.Fatal("DisableRecurring #2 changed=true, ожидали false")
+		t.Fatal("DisableRecurring #2 changed=true, expected false")
 	}
 
 	missingUserID := userID - 1000000
@@ -579,7 +579,7 @@ func TestDisableRecurring_ChangedBool(t *testing.T) {
 		t.Fatalf("DisableRecurring missing: %v", err)
 	}
 	if changed {
-		t.Fatal("DisableRecurring missing changed=true, ожидали false")
+		t.Fatal("DisableRecurring missing changed=true, expected false")
 	}
 }
 
@@ -609,19 +609,19 @@ func TestFinalizeYookassaPayment_DisabledRecurringNotReactivated(t *testing.T) {
 		t.Fatalf("FinalizeYookassaPayment: %v", err)
 	}
 	if !activation.Changed || activation.RecurringActive {
-		t.Fatalf("activation = %+v, ожидали changed без recurring reactivation", activation)
+		t.Fatalf("activation = %+v, expected changed without recurring reactivation", activation)
 	}
 	profile := recurringProfile(t, s, userID)
 	if profile.status != "disabled" {
-		t.Fatalf("profile.status = %q, ожидали disabled", profile.status)
+		t.Fatalf("profile.status = %q, expected disabled", profile.status)
 	}
 	if len(subRows(t, s, userID)) != 1 {
-		t.Fatalf("subscriptions count = %d, ожидали 1", len(subRows(t, s, userID)))
+		t.Fatalf("subscriptions count = %d, expected 1", len(subRows(t, s, userID)))
 	}
 }
 
-// blocked требует ручной проверки: запоздалый success in-flight recurring платежа
-// продлевает подписку, но не должен молча переактивировать профиль.
+// blocked requires a manual check: a late success of an in-flight recurring payment
+// extends the subscription, but must not silently reactivate the profile.
 func TestFinalizeYookassaPayment_BlockedRecurringNotReactivated(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -648,20 +648,20 @@ func TestFinalizeYookassaPayment_BlockedRecurringNotReactivated(t *testing.T) {
 		t.Fatalf("FinalizeYookassaPayment: %v", err)
 	}
 	if !activation.Changed || activation.RecurringActive {
-		t.Fatalf("activation = %+v, ожидали changed без recurring reactivation", activation)
+		t.Fatalf("activation = %+v, expected changed without recurring reactivation", activation)
 	}
 	profile := recurringProfile(t, s, userID)
 	if profile.status != "blocked" {
-		t.Fatalf("profile.status = %q, ожидали blocked", profile.status)
+		t.Fatalf("profile.status = %q, expected blocked", profile.status)
 	}
 	if len(subRows(t, s, userID)) != 1 {
-		t.Fatalf("subscriptions count = %d, ожидали 1", len(subRows(t, s, userID)))
+		t.Fatalf("subscriptions count = %d, expected 1", len(subRows(t, s, userID)))
 	}
 }
 
-// TestFinalizeYookassaPayment_ConcurrentSameUser — два параллельных финальных
-// платежа одного юзера создают две независимые строки подписки, каждая со своим
-// expires_at ≈ now()+30 дней, без гонок/потерянных обновлений.
+// TestFinalizeYookassaPayment_ConcurrentSameUser: two parallel final
+// payments of one user create two independent subscription rows, each with its own
+// expires_at ~ now()+30 days, without races/lost updates.
 func TestFinalizeYookassaPayment_ConcurrentSameUser(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -719,13 +719,13 @@ func TestFinalizeYookassaPayment_ConcurrentSameUser(t *testing.T) {
 
 	subs := subRows(t, s, userID)
 	if len(subs) != 2 {
-		t.Fatalf("subscriptions count = %d, ожидали 2", len(subs))
+		t.Fatalf("subscriptions count = %d, expected 2", len(subs))
 	}
 	wantLo := before.Add(30 * 24 * time.Hour).Add(-1 * time.Hour)
 	wantHi := time.Now().Add(30 * 24 * time.Hour).Add(1 * time.Hour)
 	for i, sub := range subs {
 		if sub.expires.Before(wantLo) || sub.expires.After(wantHi) {
-			t.Errorf("subscriptions[%d].expires = %v, ожидали ≈ now()+30 дней (окно %v..%v)", i, sub.expires, wantLo, wantHi)
+			t.Errorf("subscriptions[%d].expires = %v, expected ~ now()+30 days (window %v..%v)", i, sub.expires, wantLo, wantHi)
 		}
 	}
 }
@@ -739,7 +739,7 @@ func TestFinalizeYookassaPayment_IndependentOfActive(t *testing.T) {
 	oldSubID := insertSubscription(t, s, userID, 5, 15)
 	subs := subRows(t, s, userID)
 	if len(subs) != 1 {
-		t.Fatalf("стартовые subscriptions = %d, ожидали 1", len(subs))
+		t.Fatalf("initial subscriptions = %d, expected 1", len(subs))
 	}
 	oldExpires := subs[0].expires
 
@@ -760,12 +760,12 @@ func TestFinalizeYookassaPayment_IndependentOfActive(t *testing.T) {
 		t.Fatalf("FinalizeYookassaPayment: %v", err)
 	}
 	if !activation.Changed {
-		t.Fatal("FinalizeYookassaPayment changed=false, ожидали true")
+		t.Fatal("FinalizeYookassaPayment changed=false, expected true")
 	}
 
 	subs = subRows(t, s, userID)
 	if len(subs) != 2 {
-		t.Fatalf("subscriptions count = %d, ожидали 2", len(subs))
+		t.Fatalf("subscriptions count = %d, expected 2", len(subs))
 	}
 	newSub := subs[0]
 	foundNewSub := false
@@ -774,21 +774,21 @@ func TestFinalizeYookassaPayment_IndependentOfActive(t *testing.T) {
 			newSub = sub
 			foundNewSub = true
 		} else if !sub.expires.Equal(oldExpires) {
-			t.Errorf("старая подписка expires_at = %v, ожидали неизменный %v", sub.expires, oldExpires)
+			t.Errorf("old subscription expires_at = %v, expected unchanged %v", sub.expires, oldExpires)
 		}
 	}
 	if !foundNewSub {
-		t.Fatal("новая строка подписки не найдена")
+		t.Fatal("new subscription row not found")
 	}
 	if newSub.minutesLimit != 900 || newSub.minutesBalance != 900 {
-		t.Fatalf("новая подписка minutes = %d/%d, ожидали 900/900", newSub.minutesBalance, newSub.minutesLimit)
+		t.Fatalf("new subscription minutes = %d/%d, expected 900/900", newSub.minutesBalance, newSub.minutesLimit)
 	}
 
-	// Новый период независим от старого: expires ≈ now()+30 дней, НЕ старый+30 дней.
+	// The new period is independent of the old one: expires ~ now()+30 days, NOT old+30 days.
 	wantLo := before.Add(30 * 24 * time.Hour).Add(-1 * time.Hour)
 	wantHi := time.Now().Add(30 * 24 * time.Hour).Add(1 * time.Hour)
 	if newSub.expires.Before(wantLo) || newSub.expires.After(wantHi) {
-		t.Fatalf("новый expires_at = %v, ожидали ≈ now()+30 дней в окне %v..%v, без chain от старой подписки",
+		t.Fatalf("new expires_at = %v, expected ~ now()+30 days in window %v..%v, without a chain from the old subscription",
 			newSub.expires, wantLo, wantHi)
 	}
 }

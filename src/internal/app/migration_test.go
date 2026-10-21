@@ -47,11 +47,11 @@ func TestMigration00014_AlignsOnlyActiveRecurringProfiles(t *testing.T) {
 
 	activeProfile := recurringProfile(t, s, activeUserID)
 	if activeProfile.status != "active" || !activeProfile.nextChargeAt.Equal(effectiveExpires) {
-		t.Fatalf("active profile = %#v, ожидали next_charge_at=%v", activeProfile, effectiveExpires)
+		t.Fatalf("active profile = %#v, want next_charge_at=%v", activeProfile, effectiveExpires)
 	}
 	failedProfile := recurringProfile(t, s, failedUserID)
 	if failedProfile.status != "charge_failed" || !failedProfile.nextChargeAt.Equal(failedNext) {
-		t.Fatalf("charge_failed profile changed: %#v, ожидали next_charge_at=%v", failedProfile, failedNext)
+		t.Fatalf("charge_failed profile changed: %#v, want next_charge_at=%v", failedProfile, failedNext)
 	}
 }
 
@@ -79,13 +79,13 @@ func TestMigration00015_DisabledProfilesEraseTokenAndDownRestoresNotNull(t *test
 	})
 
 	if methodID := recurringProfilePaymentMethodID(t, s, disabledUserID); methodID != nil {
-		t.Fatalf("disabled payment_method_id = %q, ожидали NULL", *methodID)
+		t.Fatalf("disabled payment_method_id = %q, want NULL", *methodID)
 	}
 	if methodID := recurringProfilePaymentMethodID(t, s, activeUserID); methodID == nil || *methodID != "pm-migration-active" {
-		t.Fatalf("active payment_method_id = %v, ожидали pm-migration-active", methodID)
+		t.Fatalf("active payment_method_id = %v, want pm-migration-active", methodID)
 	}
 	if methodID := recurringProfilePaymentMethodID(t, s, failedUserID); methodID == nil || *methodID != "pm-migration-failed" {
-		t.Fatalf("charge_failed payment_method_id = %v, ожидали pm-migration-failed", methodID)
+		t.Fatalf("charge_failed payment_method_id = %v, want pm-migration-failed", methodID)
 	}
 
 	downSQL := migrationDownSQL(t, "../../migrations/00015_recurring_profile_disable_erases_token.sql")
@@ -94,13 +94,13 @@ func TestMigration00015_DisabledProfilesEraseTokenAndDownRestoresNotNull(t *test
 	}
 
 	if methodID := recurringProfilePaymentMethodID(t, s, disabledUserID); methodID == nil || *methodID != "" {
-		t.Fatalf("disabled payment_method_id after down = %v, ожидали empty placeholder", methodID)
+		t.Fatalf("disabled payment_method_id after down = %v, want empty placeholder", methodID)
 	}
 	if methodID := recurringProfilePaymentMethodID(t, s, activeUserID); methodID == nil || *methodID != "pm-migration-active" {
-		t.Fatalf("active payment_method_id after down = %v, ожидали pm-migration-active", methodID)
+		t.Fatalf("active payment_method_id after down = %v, want pm-migration-active", methodID)
 	}
 	if methodID := recurringProfilePaymentMethodID(t, s, failedUserID); methodID == nil || *methodID != "pm-migration-failed" {
-		t.Fatalf("charge_failed payment_method_id after down = %v, ожидали pm-migration-failed", methodID)
+		t.Fatalf("charge_failed payment_method_id after down = %v, want pm-migration-failed", methodID)
 	}
 
 	var nullable string
@@ -114,7 +114,7 @@ func TestMigration00015_DisabledProfilesEraseTokenAndDownRestoresNotNull(t *test
 		t.Fatalf("query payment_method_id nullability: %v", err)
 	}
 	if nullable != "NO" {
-		t.Fatalf("payment_method_id is_nullable = %q, ожидали NO", nullable)
+		t.Fatalf("payment_method_id is_nullable = %q, want NO", nullable)
 	}
 }
 

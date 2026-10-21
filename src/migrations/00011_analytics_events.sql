@@ -1,6 +1,6 @@
 -- +goose Up
--- Аналитические события для продуктовой воронки и дедупа новых payment nudges.
--- Бизнес-таблицы payments/subscriptions/jobs остаются источником истины по деньгам и квоте.
+-- Analytics events for the product funnel and dedup of new payment nudges.
+-- The business tables payments/subscriptions/jobs remain the source of truth for money and quota.
 
 CREATE TABLE analytics_events (
     id          BIGSERIAL   PRIMARY KEY,

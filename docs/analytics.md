@@ -1,54 +1,54 @@
-# Продуктовая аналитика воронки
+# Product funnel analytics
 
-Runbook для issue #39 и runtime-событий issue #12. Базовая аналитика считается из PostgreSQL:
-бизнес-факты берутся из существующих таблиц, а UX-события, которых в них нет, пишутся в
+Runbook for issue #39 and the runtime events of issue #12. Base analytics is computed from PostgreSQL:
+business facts come from existing tables, and UX events that are not stored there are written to
 `analytics_events`.
 
-Metabase dashboard для заказчика описан отдельно в [`analytics-dashboard.md`](analytics-dashboard.md).
-SQL-шаблон cards v0 живёт в [`analytics-dashboard-cards.md`](analytics-dashboard-cards.md).
+The Metabase dashboard for the customer is described separately in [`analytics-dashboard.md`](analytics-dashboard.md).
+The SQL template for cards v0 lives in [`analytics-dashboard-cards.md`](analytics-dashboard-cards.md).
 
-## 1. Контракт
+## 1. Contract
 
-Источник данных:
-- `users` - первый контакт, consent, trial counters, payment email, F9 timestamps;
-- `jobs` - отправка ссылки, подключение provider-бота, terminal result, summary cache, качество provider;
-- `payments` - созданные direct payment links и successful payments;
-- `subscriptions` - активная, истекающая и историческая платная квота;
-- `refunds` - операционный контроль возвратов;
-- `analytics_events` - `/start`, отказ от consent, просмотр подписки, клик оплаты и отправленные дожимы.
+Data sources:
+- `users` - first contact, consent, trial counters, payment email, F9 timestamps;
+- `jobs` - link submission, provider bot join, terminal result, summary cache, provider quality;
+- `payments` - created direct payment links and successful payments;
+- `subscriptions` - active, expiring and historical paid quota;
+- `refunds` - operational refund control;
+- `analytics_events` - `/start`, consent decline, subscription view, payment click and sent nudges.
 
-Стандартные отчеты не выводят:
+Standard reports do not output:
 - `meeting_url`;
 - email;
 - provider payment id, external job id, payment intent key;
 - raw payload/metadata;
-- полный `last_error`.
+- full `last_error`.
 
-Если нужен разбор конкретного пользователя, использовать раздел 8. В агрегатных запросах достаточно `user_id` только как внутреннего ключа для join/count.
+For a specific user investigation, use section 8. In aggregate queries `user_id` is enough, as an internal join/count key only.
 
-## 2. Как просить Codex/AI-агента
+## 2. How to ask Codex/an AI agent
 
-Шаблон запроса:
+Request template:
 
 ```text
-Codex, подключись к dev/prod PostgreSQL проекта transcrib по актуальному runbook.
-Не читай .env и не печатай секреты. Выполни запрос из docs/analytics.md:
-<номер и название запроса>.
-Период: с <YYYY-MM-DD> по <YYYY-MM-DD>.
-Верни только агрегаты, без meeting URL, email, payment ids и raw payload.
+Codex, connect to the dev/prod PostgreSQL of the transcrib project per the current runbook.
+Do not read .env and do not print secrets. Run the query from docs/analytics.md:
+<number and name of the query>.
+Period: from <YYYY-MM-DD> to <YYYY-MM-DD>.
+Return aggregates only, without meeting URL, email, payment ids and raw payload.
 ```
 
-Для `psql` удобно задавать границы периода переменными:
+For `psql` it is convenient to pass the period bounds as variables:
 
 ```sh
 psql "$DATABASE_URL" -v from='2026-07-01 00:00:00+00' -v to='2026-07-08 00:00:00+00'
 ```
 
-Все запросы ниже считают период как `[from, to)`.
+All queries below treat the period as `[from, to)`.
 
-## 3. Быстрый health-срез данных
+## 3. Quick data health check
 
-Зачем: перед аналитикой понять, что БД на месте и какие объемы считаем.
+Why: before analytics, make sure the DB is in place and see the volumes being counted.
 
 ```sql
 SELECT 'users' AS table_name, COUNT(*) AS rows_count FROM users
@@ -64,11 +64,11 @@ UNION ALL
 SELECT 'analytics_events', COUNT(*) FROM analytics_events;
 ```
 
-## 4. Воронка пользователей
+## 4. User funnel
 
 ### 4.1. Cumulative reached counts
 
-Зачем: ответить, сколько пользователей дошло до каждого этапа. Когорта - пользователи, впервые созданные в периоде.
+Why: answer how many users reached each stage. Cohort: users first created in the period.
 
 ```sql
 WITH
@@ -147,16 +147,16 @@ SELECT
 FROM funnel;
 ```
 
-Интерпретация:
-- `first_contact_users` - все созданные пользователи; точные `/start` после #12 смотрим в
-  `analytics_events` как `bot_start`;
-- `transcript_users` - terminal `done` или `failed_summary`;
-- `summary_users` - `done` с непустым `summary_md`;
-- `payment_link_users` - payment intent уже создан в БД, не клик по внешней ЮKassa ссылке.
+Interpretation:
+- `first_contact_users` - all created users; exact `/start` events after #12 are in
+  `analytics_events` as `bot_start`;
+- `transcript_users` - terminal `done` or `failed_summary`;
+- `summary_users` - `done` with a non-empty `summary_md`;
+- `payment_link_users` - the payment intent is already created in the DB, not a click on the external YooKassa link.
 
 ### 4.2. Current stage
 
-Зачем: увидеть, где сейчас лежит последний достижимый этап пользователя. Этапы взаимоисключающие.
+Why: see where the last reachable stage of each user currently lies. Stages are mutually exclusive.
 
 ```sql
 WITH
@@ -238,9 +238,9 @@ GROUP BY current_stage
 ORDER BY current_stage;
 ```
 
-## 5. Дневные срезы
+## 5. Daily slices
 
-### 5.1. Новые пользователи и consent
+### 5.1. New users and consent
 
 ```sql
 WITH params AS (
@@ -258,7 +258,7 @@ GROUP BY day
 ORDER BY day;
 ```
 
-### 5.2. Первые ссылки и provider join
+### 5.2. First links and provider join
 
 ```sql
 WITH
@@ -289,7 +289,7 @@ GROUP BY day
 ORDER BY day;
 ```
 
-### 5.3. Transcript и summary
+### 5.3. Transcript and summary
 
 ```sql
 WITH params AS (
@@ -312,7 +312,7 @@ GROUP BY day
 ORDER BY day;
 ```
 
-### 5.4. Payment links и successful payments
+### 5.4. Payment links and successful payments
 
 ```sql
 WITH params AS (
@@ -334,7 +334,7 @@ ORDER BY day;
 
 ### 5.5. Successful payments by paid_at
 
-Зачем: отдельно смотреть дату фактической оплаты, а не дату создания payment link.
+Why: look at the date of the actual payment separately, not the payment link creation date.
 
 ```sql
 WITH params AS (
@@ -354,8 +354,8 @@ ORDER BY day;
 
 ### 5.6. UX events and nudges
 
-Зачем: видеть события, которых нет в бизнес-таблицах: `/start`, отказ от consent, открытие оплаты,
-клик оплаты и отправленные дожимы.
+Why: see events that are absent from the business tables: `/start`, consent decline, payment view,
+payment click and sent nudges.
 
 ```sql
 WITH params AS (
@@ -374,7 +374,7 @@ GROUP BY day, e.event_type, e.event_key
 ORDER BY day, e.event_type, e.event_key;
 ```
 
-## 6. Trial, paid и subscription health
+## 6. Trial, paid and subscription health
 
 ### 6.1. Trial usage
 
@@ -389,7 +389,7 @@ SELECT
 FROM users;
 ```
 
-`180` соответствует текущему продуктовому лимиту 3 часа. Если лимит поменяется, заменить число на актуальный `TRIAL_HOURS_LIMIT * 60`.
+`180` matches the current product limit of 3 hours. If the limit changes, replace the number with the current `TRIAL_HOURS_LIMIT * 60`.
 
 ### 6.2. Trial to paid
 
@@ -457,7 +457,7 @@ SELECT
 FROM users;
 ```
 
-## 7. Операционное качество
+## 7. Operational quality
 
 ### 7.1. Job status by provider
 
@@ -521,7 +521,7 @@ ORDER BY r.status;
 
 ## 8. Debug by user_id
 
-Эти запросы можно использовать только для поддержки конкретного пользователя. Они намеренно не выводят `meeting_url`, email, provider payment ids и raw payload.
+These queries may be used only to support a specific user. They intentionally do not output `meeting_url`, email, provider payment ids and raw payload.
 
 ### 8.1. User timeline
 
@@ -589,22 +589,22 @@ WHERE s.user_id = :user_id
 ORDER BY s.paid_at DESC;
 ```
 
-## 9. Слепые зоны
+## 9. Blind spots
 
-После issue #12 часть UX-событий пишется в `analytics_events`: `bot_start`, `consent_declined`,
+After issue #12 some UX events are written to `analytics_events`: `bot_start`, `consent_declined`,
 `subscription_viewed`, `payment_requested`, `nudge_sent`.
 
-Без новых данных сейчас не считаются:
-- клик по внешней ссылке ЮKassa: нет redirect/callback tracking;
-- отдельный post-call notify "баланс закончился": используем расчетный нулевой баланс;
-- точное содержание отправленного сообщения: хранится только класс `nudge_sent`, не текст.
+Not counted for now without new data:
+- click on the external YooKassa link: there is no redirect/callback tracking;
+- separate post-call notify "balance ran out": we use the computed zero balance;
+- exact content of a sent message: only the `nudge_sent` class is stored, not the text.
 
-`analytics_events` не дублирует `jobs`, `payments` и `subscriptions`: платежи, подписки и встречи
-остаются источниками правды в своих бизнес-таблицах.
+`analytics_events` does not duplicate `jobs`, `payments` and `subscriptions`: payments, subscriptions and meetings
+remain the source of truth in their business tables.
 
-## 10. CTE-шаблон без дополнительных объектов
+## 10. CTE template without extra objects
 
-Если один и тот же отчет нужен часто, использовать этот read-only CTE. View в БД не создаем, чтобы не добавлять новые объекты даже вручную.
+If the same report is needed often, use this read-only CTE. We do not create a DB view, to avoid adding new objects even manually.
 
 ```sql
 WITH

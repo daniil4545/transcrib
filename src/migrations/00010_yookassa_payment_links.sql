@@ -1,7 +1,7 @@
 -- +goose Up
--- Прямые payment links ЮKassa: платеж может быть successful без Telegram charge_id.
--- Источник идемпотентности создания ссылки — наш Idempotence-Key, payment.id ЮKassa
--- хранится в provider_payment_charge_id.
+-- Direct YooKassa payment links: a payment may be successful without a Telegram charge_id.
+-- The source of idempotence for link creation is our Idempotence-Key, the YooKassa payment.id
+-- is stored in provider_payment_charge_id.
 
 ALTER TABLE users
     ADD COLUMN payment_email TEXT;

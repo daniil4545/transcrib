@@ -1,200 +1,203 @@
-# Деплой и инфраструктура transcrib
+# Deployment and infrastructure of transcrib
 
-Главный runbook по инфраструктуре. Если нужно понять, что где развернуто, как катить prod/test,
-как проверить состояние или где искать узкую операцию, начинать отсюда.
+Main infrastructure runbook. Start here to find out what is deployed where, how to roll out
+prod/test, how to check the state, or where to look for a narrow operation.
 
-## Быстрая карта
+## Quick map
 
-| Что | Где |
+| What | Where |
 | --- | --- |
-| Сервер | `203.0.113.10`, общий VPS команды |
+| Server | `203.0.113.10`, shared team VPS |
 | Prod | Coolify service `transcrib-prod`, resource UUID `<prod-resource-uuid>`, image `ghcr.io/daniil4545/transcrib:sha-<git-sha>` |
 | Dev bot | Coolify service `transcrib-dev`, resource UUID `<dev-resource-uuid>`, image `ghcr.io/daniil4545/transcrib:sha-<git-sha>` |
 | Prod env | Coolify-managed environment variables |
 | Dev env | Coolify-managed environment variables |
 | Site | `https://transcrib.example.com`, host nginx, docroot `/var/www/transcrib.example.com` |
 | Analytics | `https://analytics.example.com/dashboard/2`, Metabase on `127.0.0.1:3001`; visible dashboard is PROD, DEV kept as archive/admin fallback |
-| Coolify CD | `https://coolify.example.com`, host nginx -> `127.0.0.1:8000` + loopback websocket `6001/6002`; Coolify `APP_URL` должен совпадать |
-| Coolify MCP | `https://coolify.example.com/mcp`, read-only AI view через API token |
-| Logs | [`logs.md`](logs.md); Dozzle через SSH tunnel, только live-viewer |
-| Backup | prod `pg_dump`, временно on-server `/var/backups/transcrib/postgres` |
+| Coolify CD | `https://coolify.example.com`, host nginx -> `127.0.0.1:8000` + loopback websocket `6001/6002`; Coolify `APP_URL` must match |
+| Coolify MCP | `https://coolify.example.com/mcp`, read-only AI view via API token |
+| Logs | [`logs.md`](logs.md); Dozzle through an SSH tunnel, live viewer only |
+| Backup | prod `pg_dump`, temporarily on-server `/var/backups/transcrib/postgres` |
 
-Секреты не хранятся в git. AI-агент не читает `.env`, `docker inspect env`,
-`docker exec printenv`, приватные ключи и дампы.
+Secrets are not stored in git. The AI agent does not read `.env`, `docker inspect env`,
+`docker exec printenv`, private keys, or dumps.
 
-## Что где искать
+## Where to look
 
-| Задача | Документ |
+| Task | Document |
 | --- | --- |
-| Катить prod/test | этот файл |
-| Проверить или восстановить backup БД | [`backup.md`](backup.md) |
-| Читать и проверять логи | [`logs.md`](logs.md) |
-| Обслужить Dozzle | [`dozzle/README.md`](dozzle/README.md) |
-| Обслужить Metabase dashboard | [`../docs/analytics-dashboard.md`](../docs/analytics-dashboard.md) |
-| Настроить GitHub Actions + Coolify CD | [`coolify-cd.md`](coolify-cd.md) |
-| Понять devops-решения и приоритеты hardening | [`../docs/devops-practices.md`](../docs/devops-practices.md) |
-| История серверных решений и железо | [`../docs/deployment.md`](../docs/deployment.md) |
+| Roll out prod/test | this file |
+| Check or restore a DB backup | [`backup.md`](backup.md) |
+| Read and check logs | [`logs.md`](logs.md) |
+| Maintain Dozzle | [`dozzle/README.md`](dozzle/README.md) |
+| Maintain the Metabase dashboard | [`../docs/analytics-dashboard.md`](../docs/analytics-dashboard.md) |
+| Set up GitHub Actions + Coolify CD | [`coolify-cd.md`](coolify-cd.md) |
+| Understand devops decisions and hardening priorities | [`../docs/devops-practices.md`](../docs/devops-practices.md) |
+| History of server decisions and hardware | [`../docs/deployment.md`](../docs/deployment.md) |
 
 ## Analytics dashboard
 
-Metabase живёт отдельно от bot deploy и не меняет product schema/runtime:
+Metabase lives separately from the bot deploy and does not change the product schema/runtime:
 
 - compose project `transcrib-analytics-dev`;
-- host bind `127.0.0.1:3001`, внешний доступ только через nginx `https://analytics.example.com`;
+- host bind `127.0.0.1:3001`, external access only through nginx `https://analytics.example.com`;
 - visible dashboard is PROD aggregates on the existing `analytics.example.com` domain;
 - DEV dashboard is kept only as an admin/archive fallback;
 - PROD datasource uses Coolify prod DB through a column-limited read-only role;
-- SQL/cards и data boundary описаны в [`../docs/analytics-dashboard.md`](../docs/analytics-dashboard.md).
+- SQL/cards and the data boundary are described in [`../docs/analytics-dashboard.md`](../docs/analytics-dashboard.md).
 
 Metabase was temporarily connected to the prod Docker network
 `<prod-resource-uuid>` without restarting bot/Postgres. Durable follow-up: add that network as
 an external analytics-compose network and recreate only Metabase. Also rotate the temporary
-Metabase/admin and `metabase_prod_ro` passwords. Rollback dashboard-слоя не требует rollback бота:
+Metabase/admin and `metabase_prod_ro` passwords. Rolling back the dashboard layer does not require a bot rollback:
 switch `/dashboard/2` back to the DEV archive or hide/remove the PROD datasource in Metabase.
 
-## Как работает деплой
+## How deployment works
 
-### Целевой CD через Coolify
+### Target CD through Coolify
 
-Текущий dev CD описан в [`coolify-cd.md`](coolify-cd.md): CI workflow и Deploy workflow гоняют
-DB-backed Go-проверки с миграциями; Deploy workflow не собирает image, если эти проверки не прошли.
-После проверок он собирает image `ghcr.io/daniil4545/transcrib:sha-<sha>`, затем строго
-последовательно:
+The current dev CD is described in [`coolify-cd.md`](coolify-cd.md): the CI workflow and the Deploy
+workflow run DB-backed Go checks with migrations; the Deploy workflow does not build the image if
+these checks fail. After the checks it builds the image `ghcr.io/daniil4545/transcrib:sha-<sha>`,
+then, strictly in sequence:
 
-1. PATCH-ит Coolify Service точным `src/docker-compose.coolify.yml` как base64
-   `docker_compose_raw` с `instant_deploy=false`.
-2. PATCH-ит `APP_IMAGE` на полный SHA-tag.
-3. Вызывает Coolify deploy webhook ровно один раз.
+1. PATCHes the Coolify Service with the exact `src/docker-compose.coolify.yml` as base64
+   `docker_compose_raw` with `instant_deploy=false`.
+2. PATCHes `APP_IMAGE` to the full SHA tag.
+3. Calls the Coolify deploy webhook exactly once.
 
-Coolify Service хранит Compose внутри. Репозиторный `src/docker-compose.coolify.yml` —
-единственный источник истины для обоих контуров: workflow синхронизирует его перед deploy и в
-`transcrib-dev`, и в `transcrib-prod`. Правка Compose руками в Coolify UI недопустима: она живёт
-до следующего deploy и ломает контур на ближайшем рестарте (инцидент 2026-08-12). `dev` выкатывается
-автоматически с ветки `dev`; prod выкатывается только вручную по release tag через
-`workflow_dispatch` с `target=prod`. Push в `main` prod не выкатывает. Environment `production`
-хранит prod secrets, required reviewers можно включить только если тариф GitHub это позволяет.
+The Coolify Service stores the Compose file inside. The repository file `src/docker-compose.coolify.yml`
+is the single source of truth for both environments: the workflow syncs it before deploy into both
+`transcrib-dev` and `transcrib-prod`. Editing Compose by hand in the Coolify UI is not allowed: the
+edit lives only until the next deploy and breaks the environment on the next restart (incident
+2026-08-12). `dev` is rolled out automatically from the `dev` branch; prod is rolled out only
+manually by release tag through `workflow_dispatch` with `target=prod`. A push to `main` does not
+roll out prod. The `production` environment stores the prod secrets; required reviewers can be
+enabled only if the GitHub plan allows it.
 
-Обязательная проверка работающего окружения после завершения workflow:
+Mandatory check of the running environment after the workflow finishes:
 
 ```sh
 deploy/verify-deploy.sh <dev|prod> <full-40-char-git-sha>
 ```
 
-Она вызывает только разрешённые команды из `safe-ssh.sh`, не читает переменные окружения и секреты
-и проверяет два связанных по ID контейнера снимка Docker: точный SHA образа и OCI revision,
-health-состояние, перезапуски, OOM, время старта, `startup_complete`, запрещённые ошибки за весь
-текущий запуск и отдельную проверку БД/goose. Ошибка Docker/inspect/logs/exec считается
-операционной ошибкой, а не результатом проверки runtime. Коды: `0` PASS, `1` runtime FAIL,
-`2` неверный ввод, `3` операционная ошибка, `4` INCONCLUSIVE. GitHub Actions пока не вызывает
-этот скрипт автоматически: сразу после workflow его запускает оператор или агент. Без `PASS`
-deploy не принят.
+It calls only the allowed commands from `safe-ssh.sh`, does not read environment variables or
+secrets, and checks two Docker snapshots linked by container ID: the exact image SHA and OCI
+revision, health state, restarts, OOM, start time, `startup_complete`, forbidden errors over the
+whole current run, and a separate DB/goose check. A Docker/inspect/logs/exec error counts as an
+operational error, not as a runtime check result. Codes: `0` PASS, `1` runtime FAIL, `2` invalid
+input, `3` operational error, `4` INCONCLUSIVE. GitHub Actions does not call this script
+automatically yet: an operator or an agent runs it right after the workflow. Without `PASS` the
+deploy is not accepted.
 
-Coolify MCP (`https://coolify.example.com/mcp`) можно подключить к Codex как read-only источник
-сведений о Coolify resources. Он помогает агенту быстро понять projects/services/databases перед
-диагностикой, но deploy, rollback, env changes и runtime-проверки остаются через GitHub Actions,
-Coolify webhook и `deploy/safe-ssh.sh`. Настройка и токен описаны в [`coolify-cd.md`](coolify-cd.md).
+Coolify MCP (`https://coolify.example.com/mcp`) can be connected to Codex as a read-only source of
+information about Coolify resources. It helps the agent quickly understand projects/services/databases
+before diagnostics, but deploy, rollback, env changes, and runtime checks stay with GitHub Actions,
+the Coolify webhook, and `deploy/safe-ssh.sh`. Setup and the token are described in
+[`coolify-cd.md`](coolify-cd.md).
 
-Для Coolify Telegram notifications нужны две infra-настройки на самом Coolify: `extra_hosts` pin
-`api.telegram.org:149.154.167.220` и `APP_URL=https://coolify.example.com`. Иначе Telegram может
-таймаутиться или получить inline button URL вида `http://localhost`. Для Coolify Monitoring/Sentinel
-нужен внутренний bind `10.0.0.1:8000:8080`: `coolify-sentinel` ходит в Coolify через
-`host.docker.internal:8000`, а публичный UI остаётся за host nginx.
-Telegram notification settings включены на team/project `transcrib` и покрывают оба Coolify service:
-`transcrib-dev` и `transcrib-prod`.
-Coolify realtime остаётся закрыт на loopback `127.0.0.1:6001-6002`; host nginx в
-host nginx vhost `coolify.example.com` прокидывает websocket routes `/app/` и `/terminal/ws`.
+Coolify Telegram notifications need two infra settings on Coolify itself: an `extra_hosts` pin
+`api.telegram.org:149.154.167.220` and `APP_URL=https://coolify.example.com`. Otherwise Telegram may
+time out or get an inline button URL like `http://localhost`. Coolify Monitoring/Sentinel needs an
+internal bind `10.0.0.1:8000:8080`: `coolify-sentinel` reaches Coolify through
+`host.docker.internal:8000`, while the public UI stays behind host nginx.
+Telegram notification settings are enabled on the team/project `transcrib` and cover both Coolify
+services: `transcrib-dev` and `transcrib-prod`.
+Coolify realtime stays closed on loopback `127.0.0.1:6001-6002`; the host nginx vhost
+`coolify.example.com` proxies the websocket routes `/app/` and `/terminal/ws`.
 
-Текущий prod rollout: tag `0.0.3.4` -> `4804e9e6162238f663bf0789eacff9bcc087ce95`,
+Current prod rollout: tag `0.0.3.4` -> `4804e9e6162238f663bf0789eacff9bcc087ce95`,
 active resource `transcrib-prod` (`<prod-resource-uuid>`).
 
-Legacy deploy через bare repo `/srv/git/transcrib.git` и `post-receive` снят: артефакты удалены из
-репозитория, git remote `prod` убран. Единственный путь выкатки — Coolify CD; порядок и гейты — этот
-файл и [`coolify-cd.md`](coolify-cd.md).
-История hook'а доступна в git до тега `0.0.3.7`.
+The legacy deploy through the bare repo `/srv/git/transcrib.git` and `post-receive` is removed: the
+artifacts are deleted from the repository, the git remote `prod` is gone. The only rollout path is
+Coolify CD; the order and gates are in this file and [`coolify-cd.md`](coolify-cd.md).
+The hook history is available in git up to the tag `0.0.3.7`.
 
-Один compose-файл [`../src/docker-compose.prod.yml`](../src/docker-compose.prod.yml) обслуживает обе
-среды. Разные `-p` дают разные сети, контейнеры и volumes.
+One compose file [`../src/docker-compose.prod.yml`](../src/docker-compose.prod.yml) serves both
+environments. Different `-p` values give different networks, containers, and volumes.
 
-## Деплой prod
+## Prod deploy
 
-Рабочий порядок: feature branch мержится в `dev`, GitHub Actions автоматически выкатывает Coolify
-dev bot, владелец проверяет `@transcrib_dev_bot`, затем готовится release PR `dev -> main`. Merge в
-`main` не выкатывает prod. Для prod владелец даёт отдельную команду, ставится release tag и вручную
-запускается `Deploy` workflow на этом tag с `target=prod`. На prod должна лежать только стабильная
-версия.
+Working order: a feature branch is merged into `dev`, GitHub Actions automatically rolls out the
+Coolify dev bot, the owner checks `@transcrib_dev_bot`, then a release PR `dev -> main` is prepared.
+Merge into `main` does not roll out prod. For prod the owner gives a separate command, a release tag
+is created, and the `Deploy` workflow is started manually on that tag with `target=prod`. Only a
+stable version must run on prod.
 
-Жёсткий stop-gate перед запуском prod deploy: на prod не должно быть активных звонков. Перед
-`gh workflow run ... -f target=prod` обязательно выполнить:
+Hard stop gate before starting a prod deploy: there must be no active calls on prod. Before
+`gh workflow run ... -f target=prod` you must run:
 
 ```sh
 deploy/safe-ssh.sh coolify-prod-active-jobs
 deploy/safe-ssh.sh coolify-prod-app-logs 300
 ```
 
-`coolify-prod-active-jobs` должен показать `active_jobs_count=0` и завершиться с кодом `0`.
-Активными считаются `created`, `joining`, `recording`, `processing`, `transcribed`, `summarizing`,
-`awaiting_reauth`. Если команда вернула ненулевой код или app logs показывают текущий звонок,
-provider polling/processing текущей встречи, restart-loop, `409 Conflict`, config/db ошибки или
-сомнительную активность по `job_id`, prod deploy переносится до завершения звонков и повторной
-чистой проверки. Никаких исключений "по ощущениям".
+`coolify-prod-active-jobs` must show `active_jobs_count=0` and exit with code `0`.
+The active states are `created`, `joining`, `recording`, `processing`, `transcribed`, `summarizing`,
+`awaiting_reauth`. If the command returned a non-zero code, or the app logs show a current call,
+provider polling/processing of a current meeting, a restart loop, `409 Conflict`, config/db errors,
+or suspicious activity by `job_id`, the prod deploy is postponed until the calls finish and a repeated
+clean check. No exceptions "by feel".
 
-Перед prod deploy локально должны быть зелёные проверки по смыслу изменения. Базовый набор для Go:
+Before a prod deploy, the local checks relevant to the change must be green. The base set for Go:
 
 ```sh
 cd src
 NO_DOTENV=1 DATABASE_URL=postgres://transcrib:transcrib@localhost:5432/transcrib?sslmode=disable make ci-check
 ```
 
-`go test ./...` без `DATABASE_URL` не считается полным gate: DB-backed тесты пропускаются.
-`NO_DOTENV=1` не даёт AI-агенту читать локальные `.env` с секретами; обычный локальный запуск может
-использовать `.env`.
+`go test ./...` without `DATABASE_URL` is not a full gate: DB-backed tests are skipped.
+`NO_DOTENV=1` keeps the AI agent from reading local `.env` files with secrets; a regular local run
+may use `.env`.
 
-Деплой:
+Deploy:
 
 ```sh
 gh workflow run deploy.yml --ref <release-tag> -f target=prod
 gh run watch <run-id> --exit-status
 ```
 
-Проверка:
+Check:
 
 ```sh
 deploy/verify-deploy.sh prod <full-release-git-sha>
 ```
 
-Ожидаемо:
+Expected:
 
-- результат `PASS`, app и Postgres `running/healthy`;
-- app image и `app_revision` точно совпадают с полным release tag SHA;
-- restart count равен `0`, OOM flag равен `false`, start time корректен;
-- в логах текущего запуска есть `startup_complete` и за весь этот запуск нет fatal/panic,
+- result `PASS`, app and Postgres `running/healthy`;
+- app image and `app_revision` exactly match the full release tag SHA;
+- restart count is `0`, OOM flag is `false`, start time is correct;
+- the logs of the current run contain `startup_complete` and, over the whole run, no fatal/panic,
   `409 Conflict`, config/db errors;
-- отдельный DB probe отвечает и читает положительный `goose_version`;
-- `active_jobs_count=0` был подтверждён перед запуском prod deploy;
+- a separate DB probe answers and reads a positive `goose_version`;
+- `active_jobs_count=0` was confirmed before the prod deploy started;
 
-На текущем Coolify prod после успешного deploy migrate-container может не оставаться доступным в
-Docker. Prod post-deploy контракт проверяет DB/goose, но не требует сохранённый one-shot container.
-`coolify-prod-active-jobs` остаётся только pre-deploy stop-gate и после deploy не запускается.
+On the current Coolify prod, the migrate container may no longer be available in Docker after a
+successful deploy. The prod post-deploy contract checks DB/goose but does not require a preserved
+one-shot container. `coolify-prod-active-jobs` stays only a pre-deploy stop gate and is not run after
+deploy.
 
-## Деплой test/dev
+## Test/dev deploy
 
-Dev-среда нужна для живых проверок фиксов и как резервный бот. Текущий default: GitHub Actions
-автоматически деплоит `dev` в Coolify service `transcrib-dev`. У неё отдельный Telegram token,
-отдельные Coolify-managed env variables и отдельный Postgres volume. Один `BOT_TOKEN` в prod и dev
-запрещён: Telegram long polling допускает только один активный процесс на токен.
+The dev environment is for live checks of fixes and as a spare bot. Current default: GitHub Actions
+automatically deploys `dev` to the Coolify service `transcrib-dev`. It has a separate Telegram token,
+separate Coolify-managed env variables, and a separate Postgres volume. Using one `BOT_TOKEN` in prod
+and dev is forbidden: Telegram long polling allows only one active process per token.
 
-Log-level policy: test/dev env держит `LOG_LEVEL=debug`, prod env держит `LOG_LEVEL=info`. Секреты не
-печатать даже на debug; уровень нужен для диагностики состояний и внешних интеграций.
+Log-level policy: the test/dev env keeps `LOG_LEVEL=debug`, the prod env keeps `LOG_LEVEL=info`. Do
+not print secrets even at debug; the level is for diagnosing states and external integrations.
 
-Деплой:
+Deploy:
 
 ```sh
 git push origin dev
-# или ручной rerun:
+# or a manual rerun:
 gh workflow run deploy.yml --ref dev -f target=dev
 ```
 
-Сначала дождаться успешного workflow, затем обязательно проверить работающее окружение:
+First wait for the workflow to succeed, then be sure to check the running environment:
 
 ```sh
 gh run watch <run-id> --exit-status
@@ -202,26 +205,26 @@ deploy/verify-deploy.sh dev <full-dev-git-sha>
 deploy/safe-ssh.sh coolify-prod-health
 ```
 
-Ожидаемо:
+Expected:
 
-- `verify-deploy.sh` возвращает `PASS`;
-- app image и `app_revision` точно совпадают с полным ожидаемым SHA;
-- app и Postgres находятся в состоянии `running/healthy`, без restart/OOM;
-- dev migrate-container, если доступен, имеет тот же image/revision и `Exited (0)`;
-- если Coolify уже удалил one-shot migrate-container, скрипт возвращает `INCONCLUSIVE` (`4`):
-  DB/goose не подменяет доказательство exit code, deployment task проверяется отдельно;
-- prod контейнеры не пересоздавались test-деплоем.
+- `verify-deploy.sh` returns `PASS`;
+- app image and `app_revision` exactly match the full expected SHA;
+- app and Postgres are in the `running/healthy` state, without restart/OOM;
+- the dev migrate container, if available, has the same image/revision and `Exited (0)`;
+- if Coolify has already removed the one-shot migrate container, the script returns `INCONCLUSIVE`
+  (`4`): DB/goose does not replace the exit code proof, the deployment task is checked separately;
+- prod containers were not recreated by the test deploy.
 
-## Диагностика без произвольного SSH
+## Diagnostics without arbitrary SSH
 
-Для AI/devops диагностики использовать [`safe-ssh.sh`](safe-ssh.sh). Скрипт read-only и не читает
-секреты. До запуска должен быть загружен SSH key в локальный `ssh-agent`:
+For AI/devops diagnostics use [`safe-ssh.sh`](safe-ssh.sh). The script is read-only and does not read
+secrets. Before running it, an SSH key must be loaded into the local `ssh-agent`:
 
 ```sh
 ssh-add ~/.ssh/id_ed25519
 ```
 
-Основные команды:
+Main commands:
 
 ```sh
 deploy/safe-ssh.sh prod-health
@@ -275,18 +278,18 @@ deploy/safe-ssh.sh openrouter-egress
 Durable app wiring is `OPENROUTER_PROXY_URL=http://10.0.0.1:20171` in Coolify-managed env. Global
 `HTTPS_PROXY` is emergency-only because it can affect Telegram, Speech2Text and YooKassa.
 
-Логи описаны в [`logs.md`](logs.md). Коротко: active Coolify prod пишет app/Postgres в host journald
-с retention 14 дней; Coolify dev на 2026-07-01 фактически использует Docker `json-file`, поэтому его
-логи читаются через `coolify-dev-*-logs` или Coolify UI и пока не являются 14-дневным архивом.
-Dozzle логи не хранит и не является архивом: это live-viewer поверх Docker API для текущих
-контейнеров.
+Logs are described in [`logs.md`](logs.md). In short: the active Coolify prod writes app/Postgres to
+the host journald with 14-day retention; Coolify dev as of 2026-07-01 actually uses Docker
+`json-file`, so its logs are read through `coolify-dev-*-logs` or the Coolify UI and are not yet a
+14-day archive. Dozzle does not store logs and is not an archive: it is a live viewer on top of the
+Docker API for current containers.
 
-Архивные расследования legacy prod и legacy test fallback по времени делаются через journald на
-хосте и читаются только через `safe-ssh.sh`. Активный Coolify dev сейчас не имеет journald-архива:
-для него доступны текущие Docker/Coolify логи через `coolify-dev-*-logs`. Активный Coolify prod
-проверяется через `coolify-prod-*-logs` и `coolify-prod-health`. Фильтрацию по `job_id`,
-`user_id`, `external_job_id`, `event` делать локально через `rg` поверх вывода, не через
-произвольный remote shell:
+Archive investigations of legacy prod and the legacy test fallback by time are done through journald
+on the host and read only through `safe-ssh.sh`. The active Coolify dev currently has no journald
+archive: current Docker/Coolify logs are available for it through `coolify-dev-*-logs`. The active
+Coolify prod is checked through `coolify-prod-*-logs` and `coolify-prod-health`. Filter by `job_id`,
+`user_id`, `external_job_id`, `event` locally with `rg` over the output, not through an arbitrary
+remote shell:
 
 ```sh
 deploy/safe-ssh.sh test-app-journal "15 minutes ago"
@@ -300,62 +303,61 @@ deploy/safe-ssh.sh prod-postgres-journal "1 hour ago"
 deploy/safe-ssh.sh journal-usage
 ```
 
-Retention drop-in установлен 2026-06-26:
-`/etc/systemd/journald.conf.d/transcrib-retention.conf` задаёт `MaxRetentionSec=14day`,
-`SystemMaxUse=2G`, `SystemKeepFree=10G`, `Compress=yes`. При переносе/recovery создание drop-in и
-restart `systemd-journald` остаются DevOps/manual mutation после подтверждения владельца.
+The retention drop-in was installed on 2026-06-26:
+`/etc/systemd/journald.conf.d/transcrib-retention.conf` sets `MaxRetentionSec=14day`,
+`SystemMaxUse=2G`, `SystemKeepFree=10G`, `Compress=yes`. On migration/recovery, creating the drop-in
+and restarting `systemd-journald` remain a DevOps/manual mutation after owner confirmation.
 
-Инцидентный минимум: сначала `coolify-prod-health`/`coolify-dev-health` (`prod-health` и
-`test-health` только для legacy fallback), затем app/postgres logs для нужной среды, затем
-`docker-events`, `system-failed`,
-`docker-daemon-logs`, `kernel-errors`, `oom-kills`, `disk`, `memory`, `cron-logs`, `backup-status` и
-`backup-log`. Это ручная диагностика; автоматические алерты и метрики остаются отдельным
-observability-слайсом.
+Incident minimum: first `coolify-prod-health`/`coolify-dev-health` (`prod-health` and `test-health`
+only for the legacy fallback), then app/postgres logs for the needed environment, then
+`docker-events`, `system-failed`, `docker-daemon-logs`, `kernel-errors`, `oom-kills`, `disk`,
+`memory`, `cron-logs`, `backup-status`, and `backup-log`. This is manual diagnostics; automatic alerts
+and metrics remain a separate observability slice.
 
 ## Rollback
 
-Rollback делается переводом Coolify-ресурса на предыдущий image tag:
+Rollback is done by switching the Coolify resource to the previous image tag:
 
 ```sh
-# dev rollback, только после подтверждения владельца:
-# поставить APP_IMAGE=ghcr.io/daniil4545/transcrib:sha-<previous_sha> и redeploy
+# dev rollback, only after owner confirmation:
+# set APP_IMAGE=ghcr.io/daniil4545/transcrib:sha-<previous_sha> and redeploy
 
-# prod rollback, только после отдельного подтверждения владельца:
-# поставить APP_IMAGE=ghcr.io/daniil4545/transcrib:sha-<previous_sha> и redeploy
+# prod rollback, only after separate owner confirmation:
+# set APP_IMAGE=ghcr.io/daniil4545/transcrib:sha-<previous_sha> and redeploy
 ```
 
-Откат кода не откатывает данные. Если релиз включал миграцию БД, сначала проверить совместимость
-схемы. На prod предпочтительнее forward-fix, а не `goose down`.
+Rolling back code does not roll back data. If the release included a DB migration, first check
+schema compatibility. On prod, a forward fix is preferable to `goose down`.
 
-## Миграции и частичный deploy
+## Migrations and partial deploy
 
-В Coolify compose `app` зависит от `migrate: service_completed_successfully`; при failed migrate
-нужно проверять `verify-deploy.sh`, Coolify deployment task и `coolify-dev-migrate-logs`. Если
-one-shot container уже удалён, `verify-deploy.sh dev` честно возвращает `INCONCLUSIVE`: успешный
-DB/goose probe доказывает доступность схемы, но не exit code миграции именно этого deploy. Rollback
-данных через `goose down` не делать; использовать forward-fix или restore из backup по отдельному
-решению.
+In the Coolify compose, `app` depends on `migrate: service_completed_successfully`; on a failed
+migrate, check `verify-deploy.sh`, the Coolify deployment task, and `coolify-dev-migrate-logs`. If
+the one-shot container is already removed, `verify-deploy.sh dev` honestly returns `INCONCLUSIVE`: a
+successful DB/goose probe proves the schema is available, but not the exit code of the migration of
+this particular deploy. Do not roll back data with `goose down`; use a forward fix or a restore from
+backup by a separate decision.
 
-Перед рискованными миграциями prod-БД нужен свежий backup. Runbook — [`backup.md`](backup.md).
+Before risky prod DB migrations a fresh backup is required. Runbook: [`backup.md`](backup.md).
 
-## Что нельзя делать без отдельного подтверждения
+## What not to do without separate confirmation
 
-- `docker compose down -v`, `docker volume rm`, глобальный `docker system prune`;
+- `docker compose down -v`, `docker volume rm`, global `docker system prune`;
 - prod/test deploy, prod/test rollback, restart/recreate app;
-- правка Coolify prod/dev env;
-- чтение или печать секретов;
-- изменение nginx/certbot/ufw;
-- операции, которые могут задеть соседние проекты на общем VPS.
+- editing Coolify prod/dev env;
+- reading or printing secrets;
+- changing nginx/certbot/ufw;
+- operations that may affect neighboring projects on the shared VPS.
 
-## Первичная установка или восстановление
+## Initial setup or recovery
 
-Эти шаги нужны только при переносе/recovery, не при обычном deploy:
+These steps are needed only on migration/recovery, not on a regular deploy:
 
-Prod и dev поднимаются как Coolify services из репозиторного `src/docker-compose.prod.yml`; env
-задаётся в Coolify UI. Порядок первичной установки сервиса описан выше,
-специфика Coolify для transcrib — [`coolify-cd.md`](coolify-cd.md).
+Prod and dev are brought up as Coolify services from the repository `src/docker-compose.prod.yml`;
+env is set in the Coolify UI. The initial service setup order is described above, the Coolify
+specifics for transcrib are in [`coolify-cd.md`](coolify-cd.md).
 
-Минимум Coolify prod env:
+Minimum Coolify prod env:
 
 ```sh
 BOT_TOKEN=...
@@ -363,4 +365,4 @@ POSTGRES_PASSWORD=<strong password>
 DATABASE_URL=postgres://transcrib:<same password>@postgres:5432/transcrib?sslmode=disable
 ```
 
-Полный список переменных и дефолтов — [`../src/.env.example`](../src/.env.example).
+Full list of variables and defaults: [`../src/.env.example`](../src/.env.example).

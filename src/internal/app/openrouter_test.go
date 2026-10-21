@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// TestSplitTranscript: нарезка по границам строк, инвариант "склейка через \n == оригинал",
-// каждый кусок в пределах лимита (кроме одиночной строки длиннее лимита — уходит как есть).
+// TestSplitTranscript: splitting on line boundaries, the invariant "join with \n == original",
+// every chunk within the limit (except a single line longer than the limit, which goes as is).
 func TestSplitTranscript(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -31,11 +31,11 @@ func TestSplitTranscript(t *testing.T) {
 			if len(chunks) != c.wantChunks {
 				t.Fatalf("chunks=%d, want %d (%q)", len(chunks), c.wantChunks, chunks)
 			}
-			// Инвариант: склейка кусков через \n восстанавливает исходный текст.
+			// Invariant: joining the chunks with \n restores the original text.
 			if got := strings.Join(chunks, "\n"); got != c.in {
 				t.Fatalf("rejoined=%q, want %q", got, c.in)
 			}
-			// Каждый кусок в пределах лимита, кроме одиночной строки без переносов.
+			// Every chunk is within the limit, except a single line without line breaks.
 			for _, ch := range chunks {
 				if len(ch) > c.limit && strings.Contains(ch, "\n") {
 					t.Fatalf("chunk over limit %d with line break: %q", c.limit, ch)
@@ -45,8 +45,8 @@ func TestSplitTranscript(t *testing.T) {
 	}
 }
 
-// newTestSummarizer поднимает httptest-сервер с заданным хендлером и возвращает
-// настроенный на него OpenRouterSummarizer.
+// newTestSummarizer starts an httptest server with the given handler and returns an
+// OpenRouterSummarizer configured for it.
 func newTestSummarizer(t *testing.T, h http.HandlerFunc) *OpenRouterSummarizer {
 	t.Helper()
 	srv := httptest.NewServer(h)
@@ -189,8 +189,8 @@ func TestOpenRouterRetryDelay_UsesRetryAfter(t *testing.T) {
 }
 
 func TestOpenRouterSummarize_EmptyTranscript(t *testing.T) {
-	// Пустой вход не должен порождать HTTP-вызов. t.Errorf, не t.Fatal: хендлер
-	// бежит в своей горутине, t.Fatal оттуда — UB (Goexit не той горутины).
+	// Empty input must not produce an HTTP call. t.Errorf, not t.Fatal: the handler
+	// runs in its own goroutine, and t.Fatal from there is UB (Goexit of the wrong goroutine).
 	s := newTestSummarizer(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("HTTP call must not happen for empty transcript")
 	})
@@ -200,9 +200,9 @@ func TestOpenRouterSummarize_EmptyTranscript(t *testing.T) {
 }
 
 func TestOpenRouterSummarize_MapReduce(t *testing.T) {
-	// Транскрипт длиннее maxChunkChars -> N map-вызовов + 1 reduce.
+	// A transcript longer than maxChunkChars -> N map calls + 1 reduce.
 	line := "Спикер 1: " + strings.Repeat("a", 990) + "\n"
-	transcript := strings.Repeat(line, 70) // ~70k символов > maxChunkChars
+	transcript := strings.Repeat(line, 70) // ~70k characters > maxChunkChars
 	wantCalls := len(splitTranscript(transcript, maxChunkChars)) + 1
 	if wantCalls < 3 {
 		t.Fatalf("test setup: expected map-reduce (>=3 calls), got %d", wantCalls)

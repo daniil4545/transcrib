@@ -1,63 +1,63 @@
-# Архитектура БД transcrib
+# transcrib DB architecture
 
-> **Канон для:** применённой SQL-схемы миграций `00001`-`00015`, индексов, Go-типов `domain.go`, транзакционных паттернов (резерв квоты, идемпотентность платежей, F9-тики, refund).
-> **Зеркала:** `architecture.md` §5 (короткое перечисление сущностей), `payments.md` (ссылки на §3.4/§5.4).
-> **Не дублировать здесь:** контракт state machine (`architecture.md` §7), платёжный UX-поток (`payments.md` §1), продуктовые правила триала (`product.md` §5 F6).
+> **Canon for:** the applied SQL schema of migrations `00001`-`00015`, indexes, Go types in `domain.go`, transactional patterns (quota reserve, payment idempotency, F9 ticks, refund).
+> **Mirrors:** `architecture.md` §5 (short entity list), `payments.md` (links to §3.4/§5.4).
+> **Do not duplicate here:** the state machine contract (`architecture.md` §7), the payment UX flow (`payments.md` §1), the product trial rules (`product.md` §5 F6).
 
-Версия: 1.16 (2026-07-06, migration `00015`: erase YooKassa recurring token on disable).
-Сопровождает `architecture.md` §5 — детализирует схему таблиц, индексы, Go-типы, транзакционные паттерны.
+Version: 1.16 (2026-07-06, migration `00015`: erase YooKassa recurring token on disable).
+Accompanies `architecture.md` §5 and details the table schema, indexes, Go types and transactional patterns.
 
-Изменения v1.15 → v1.16: migration `00015_recurring_profile_disable_erases_token` делает `recurring_profiles.payment_method_id` nullable и очищает сохранённый YooKassa token при `DisableRecurring`/отключении автопродления.
-Изменения v1.14 → v1.15: migration `00014_align_recurring_next_charge` выравнивает `recurring_profiles.next_charge_at` для active-профилей с effective expiry пользователя (`MAX(active subscriptions.expires_at)`); новые подписочные строки создаются на фиксированные 30 дней вместо календарного месяца.
-Изменения v1.13 → v1.14: #9d добавил migration `00013_recurring_profile_status_hardening`: статусы `charging` и `blocked`, default-on recurring при включённом `RECURRING_PAYMENTS_ENABLED`, atomic `StartRecurringPaymentIntent`, stale unknown-result -> `blocked`.
-Изменения v1.12 → v1.13: #9c добавил чтение статуса `recurring_profiles` для `/balance`, пользовательское отключение через `DisableRecurring`, отключение автопродления при successful refund и structured logs на критических payment/recurring/refund переходах; новой миграции нет.
-Изменения v1.11 → v1.12: #9b добавил recurring worker без новой миграции: due-select по `recurring_profiles`, merchant-initiated payment с deterministic `payment_intent_key`, общий polling/finalize и перевод профиля в `charge_failed` при canceled/error.
-Изменения v1.10 → v1.11: миграция `00012_recurring_profiles` добавила `recurring_profiles` и сохранение `payments.payment_method_id` только если payment помечен `metadata.auto_renew=true` и ЮKassa вернула `payment_method.saved=true`.
-Изменения v1.9 → v1.10: миграция `00011_analytics_events` добавила append-only `analytics_events` для UX-фактов `/start`, отказа от consent, просмотра подписки, клика оплаты и `nudge_sent`; деньги, подписки и встречи остаются источниками правды в `payments`/`subscriptions`/`jobs`.
-Изменения v1.8 → v1.9: миграция `00010_yookassa_payment_links` добавила `users.payment_email`, `payments.payment_intent_key`, уникальность `provider_payment_charge_id`, direct pending/finalize flow по `payment.id` ЮKassa; successful direct payment создаёт подписку с `minutes_limit/minutes_balance`.
-Изменения v1.7 → v1.8: `recording_started_at`/`recording_finished_at` добавлены в `00009`; terminal billing округляет секунды вверх до минуты и для Speech2Text использует observable окно записи, если оно уже сохранено, а provider duration берёт как fallback для прямого terminal result без окна.
-Изменения v1.6 → v1.7: hourly runtime перевёл config, reserve/refund, terminal billing, `/balance` и F9 на minute-поля. Legacy `meetings_*` остаются в схеме и частично поддерживаются кодом как compatibility bridge до отдельного cleanup.
-Изменения v1.5 → v1.6: миграция `00009` добавила минутные счётчики рядом с legacy `meetings_*`, backfill `1 встреча = 60 минут`, minute-based индексы для резерва/F9 и structural down migration.
-Изменения v1.4 → v1.5: убраны дублирующие Go-snippet и подробная ASCII-ER; исторические пояснения сокращены до текущих инвариантов.
-Изменения v1.3 → v1.4: разделена фактически применённая схема `00001`-`00008` и post-0.1 Google target; блок `jobs` приведён к реальным колонкам миграций (`provider`, `status_message_id`, `summary_md`) без незаведённых `reauth_from`/`transcript_doc_url`/`summary_doc_url`/`retry_count`.
-Ранние ревизии: модель подписки `payment:subscription = 1:1`, двухфазный refund, `trial_meetings_done`, COALESCE в F9, same-URL dedup и parallel calls.
+Changes v1.15 to v1.16: migration `00015_recurring_profile_disable_erases_token` makes `recurring_profiles.payment_method_id` nullable and erases the saved YooKassa token on `DisableRecurring` / auto-renewal disable.
+Changes v1.14 to v1.15: migration `00014_align_recurring_next_charge` aligns `recurring_profiles.next_charge_at` for active profiles with the user's effective expiry (`MAX(active subscriptions.expires_at)`); new subscription rows are created for a fixed 30 days instead of a calendar month.
+Changes v1.13 to v1.14: #9d added migration `00013_recurring_profile_status_hardening`: statuses `charging` and `blocked`, default-on recurring when `RECURRING_PAYMENTS_ENABLED` is on, atomic `StartRecurringPaymentIntent`, stale unknown-result -> `blocked`.
+Changes v1.12 to v1.13: #9c added reading the `recurring_profiles` status for `/balance`, user-initiated disable via `DisableRecurring`, auto-renewal disable on successful refund and structured logs on critical payment/recurring/refund transitions; no new migration.
+Changes v1.11 to v1.12: #9b added the recurring worker without a new migration: due-select over `recurring_profiles`, merchant-initiated payment with a deterministic `payment_intent_key`, shared polling/finalize and moving the profile to `charge_failed` on canceled/error.
+Changes v1.10 to v1.11: migration `00012_recurring_profiles` added `recurring_profiles` and saving of `payments.payment_method_id` only if the payment is marked `metadata.auto_renew=true` and YooKassa returned `payment_method.saved=true`.
+Changes v1.9 to v1.10: migration `00011_analytics_events` added an append-only `analytics_events` for UX facts: `/start`, consent decline, subscription view, payment click and `nudge_sent`; money, subscriptions and meetings remain sources of truth in `payments`/`subscriptions`/`jobs`.
+Changes v1.8 to v1.9: migration `00010_yookassa_payment_links` added `users.payment_email`, `payments.payment_intent_key`, uniqueness of `provider_payment_charge_id`, the direct pending/finalize flow by YooKassa `payment.id`; a successful direct payment creates a subscription with `minutes_limit/minutes_balance`.
+Changes v1.7 to v1.8: `recording_started_at`/`recording_finished_at` were added in `00009`; terminal billing rounds seconds up to a minute and for Speech2Text uses the observable recording window if it is already saved, taking the provider duration only as a fallback for a direct terminal result without a window.
+Changes v1.6 to v1.7: the hourly runtime moved config, reserve/refund, terminal billing, `/balance` and F9 to minute fields. Legacy `meetings_*` remain in the schema and are partially supported by code as a compatibility bridge until a separate cleanup.
+Changes v1.5 to v1.6: migration `00009` added minute counters next to the legacy `meetings_*`, backfill `1 meeting = 60 minutes`, minute-based indexes for reserve/F9 and a structural down migration.
+Changes v1.4 to v1.5: removed duplicate Go snippets and the detailed ASCII ER; historical notes shortened to current invariants.
+Changes v1.3 to v1.4: separated the actually applied schema `00001`-`00008` from the post-0.1 Google target; the `jobs` block was aligned with the real migration columns (`provider`, `status_message_id`, `summary_md`) without the not-yet-created `reauth_from`/`transcript_doc_url`/`summary_doc_url`/`retry_count`.
+Early revisions: the subscription model `payment:subscription = 1:1`, two-phase refund, `trial_meetings_done`, COALESCE in F9, same-URL dedup and parallel calls.
 
-Billing go-live #7 принят как переход на 3 часа trial, 15 часов/мес и внутренний учет в минутах. В PR #26 выполнены schema, config/domain, provider duration, reserve, finalize billing, UX/F9, docs sync и cleanup модели продления подписки.
+Billing go-live #7 was accepted as the move to a 3-hour trial, 15 hours/month and internal accounting in minutes. PR #26 delivered the schema, config/domain, provider duration, reserve, finalize billing, UX/F9, docs sync and cleanup of the subscription renewal model.
 
-## 1. Зафиксированные решения
+## 1. Fixed decisions
 
-| # | Решение | Выбор | Почему |
+| # | Decision | Choice | Why |
 |---|---|---|---|
-| 1 | Scope канона | SQL-схема миграций + Go-типы `domain.go` | Один документ держит DB-инварианты, а runtime-алгоритмы ниже ссылаются на те же поля |
-| 2 | Кодирование enum-статусов | `TEXT NOT NULL` + `CHECK` | Postgres `ENUM` плохо мигрируется (`ALTER TYPE` не в транзакции), `SMALLINT` нечитаем |
-| 3 | Денежные суммы | `BIGINT` в копейках (199000 = 1990 ₽) | Telegram и ЮKassa отдают копейками — нулевые пересчёты на границе. `int64` нативен в Go, не тащим `decimal`-библиотеку. Стандарт fintech |
-| 4 | Дедупликация Job | Частичный `UNIQUE (user_id, meeting_url) WHERE status NOT IN ('done','failed_join','failed','failed_summary')` | Защищает от случайных двойных нажатий, не ломает регулярные созвоны в Zoom personal meeting room |
-| 5 | Google `refresh_token` | `TEXT` plaintext на post-0.1 Google-слайсе. **Шифрование `BYTEA` + AES-GCM ОБЯЗАТЕЛЬНО до публичного Google-режима** | На фазе закрытого Testing mode риск утечки бэкапа ниже, но Google API Security Requirements обязывают зашифровать до Production |
-| 6 | Триал и баланс подписки | `users.trial_minutes_used` + `subscriptions.minutes_balance` с **резервом при создании Job, возвратом раннего резерва и terminal billing по duration** | Атомарный `UPDATE … WHERE used < limit` физически закрывает гонку «два сообщения за 200мс». O(1) вместо `count()`. Симметрично для триала и подписки |
-| 7 | Состояние подписки в F9 | **Нет** денормализации `users.last_paid_at`. F9-тик считает `MAX(payments.paid_at WHERE status='succeeded')` на лету | Один источник правды. Корректно при refund/chargeback автоматически. На 30 юзеров — микросекунды |
-| 8 | Telegram-библиотека | `gopkg.in/telebot.v4` | v3 заморожена с июня 2024. v4 — активно развивается, payments-модуль расширен |
-| 9 | Структура `payments` | PK — `BIGSERIAL`. Direct flow: `payment_intent_key` и `provider_payment_charge_id` уникальны; legacy Telegram flow: `telegram_payment_charge_id` `UNIQUE` nullable. Поля `status` (FSM), `subscription_id`, `metadata`/`provider_paid_at`, `invoice_payload`, `fiscal_receipt_url`, `raw_payload JSONB`. Отдельная таблица `refunds` (двухфазный возврат, `idempotence_key`) | PK по charge id невозможен в стадии `pending`. Direct payment создаётся до оплаты, а финализация приходит polling'ом. FSM нужен для различения «висит» / «оплачено» / «возвращено». На MVP refunds:payment 1:1 (частичные вне скоупа); `amount_refunded`/`partially_refunded` убраны как мёртвые |
-| 10 | Аналитические UX-события | Append-only `analytics_events`, без unique на `event_key` | Нужна история повторных просмотров/кликов и дедуп новых дожимов. Бизнес-факты не дублируем: `jobs`, `payments`, `subscriptions` остаются источниками правды |
-| 11 | Автопродление | Отдельная `recurring_profiles` 1:1 к `users`; `subscriptions` не продлеваем in-place | Разделяет сохранённый способ оплаты и оплаченные периоды. Refund остаётся детерминированным по payment:subscription 1:1, а автосписание создаёт новый payment и новую subscription через общий polling/finalize |
+| 1 | Canon scope | Migration SQL schema + Go types in `domain.go` | One document holds the DB invariants, and the runtime algorithms below refer to the same fields |
+| 2 | Enum status encoding | `TEXT NOT NULL` + `CHECK` | Postgres `ENUM` migrates badly (`ALTER TYPE` is not transactional), `SMALLINT` is unreadable |
+| 3 | Money amounts | `BIGINT` in kopecks (199000 = 1990 ₽) | Telegram and YooKassa return kopecks: zero conversions at the boundary. `int64` is native in Go, no `decimal` library needed. Fintech standard |
+| 4 | Job deduplication | Partial `UNIQUE (user_id, meeting_url) WHERE status NOT IN ('done','failed_join','failed','failed_summary')` | Protects against accidental double clicks, does not break regular calls in a Zoom personal meeting room |
+| 5 | Google `refresh_token` | `TEXT` plaintext in the post-0.1 Google slice. **`BYTEA` + AES-GCM encryption is MANDATORY before the public Google mode** | In the closed Testing mode phase the backup leak risk is lower, but the Google API Security Requirements require encryption before Production |
+| 6 | Trial and subscription balance | `users.trial_minutes_used` + `subscriptions.minutes_balance` with **a reserve at Job creation, refund of an early reserve and terminal billing by duration** | An atomic `UPDATE ... WHERE used < limit` physically closes the "two messages within 200ms" race. O(1) instead of `count()`. Symmetric for trial and subscription |
+| 7 | Subscription state in F9 | **No** denormalized `users.last_paid_at`. The F9 tick computes `MAX(payments.paid_at WHERE status='succeeded')` on the fly | One source of truth. Correct on refund/chargeback automatically. For 30 users it takes microseconds |
+| 8 | Telegram library | `gopkg.in/telebot.v4` | v3 has been frozen since June 2024. v4 is actively developed, the payments module is extended |
+| 9 | `payments` structure | PK is `BIGSERIAL`. Direct flow: `payment_intent_key` and `provider_payment_charge_id` are unique; legacy Telegram flow: `telegram_payment_charge_id` `UNIQUE` nullable. Fields `status` (FSM), `subscription_id`, `metadata`/`provider_paid_at`, `invoice_payload`, `fiscal_receipt_url`, `raw_payload JSONB`. A separate `refunds` table (two-phase refund, `idempotence_key`) | A PK on the charge id is impossible in the `pending` stage. A direct payment is created before payment and finalization arrives via polling. The FSM is needed to tell "hanging" / "paid" / "refunded" apart. In the MVP refunds:payment is 1:1 (partial refunds are out of scope); `amount_refunded`/`partially_refunded` were removed as dead |
+| 10 | Analytics UX events | Append-only `analytics_events`, no unique on `event_key` | We need the history of repeated views/clicks and dedup of new nudges. Business facts are not duplicated: `jobs`, `payments`, `subscriptions` remain sources of truth |
+| 11 | Auto-renewal | A separate `recurring_profiles` 1:1 to `users`; `subscriptions` are not extended in place | Separates the saved payment method from the paid periods. Refund stays deterministic by payment:subscription 1:1, and an auto-charge creates a new payment and a new subscription through the shared polling/finalize |
 
-## 2. ER-сводка
+## 2. ER summary
 
-Применённые миграции `00001`-`00015` создают бизнес-таблицы: `users`, `jobs`, `subscriptions`, `payments`, `refunds`, `recurring_profiles`, и аналитическую таблицу `analytics_events`. `goose_db_version` — служебная таблица мигратора. `google_accounts` — post-0.1 target Google-слайса.
+The applied migrations `00001`-`00015` create the business tables `users`, `jobs`, `subscriptions`, `payments`, `refunds`, `recurring_profiles`, and the analytics table `analytics_events`. `goose_db_version` is the migrator's service table. `google_accounts` is the post-0.1 Google-slice target.
 
-| Таблица | Связи | Ответственность |
+| Table | Relations | Responsibility |
 |---|---|---|
-| `users` | PK `telegram_id`; 1:N к `jobs`, `subscriptions`, `payments` | consent, trial counters, F9 notification timestamps, payment email для чека |
-| `jobs` | FK `user_id`; nullable FK `subscription_id` | state machine встречи, provider id, Telegram status message, summary cache, quota source |
-| `subscriptions` | FK `user_id`; 1:1 с успешным платежом через `payments.subscription_id` | оплаченный период и остаток минут |
-| `payments` | FK `user_id`, nullable FK `subscription_id` | ЮKassa payment intent; direct idempotency по `payment_intent_key`/`provider_payment_charge_id`, legacy Telegram idempotency по `telegram_payment_charge_id` |
-| `recurring_profiles` | PK/FK `user_id`, nullable FK `last_payment_id` | сохранённый способ оплаты ЮKassa, статус `active|charging|charge_failed|blocked|disabled` и дата следующего автосписания |
-| `refunds` | FK `payment_id` | двухфазный полный возврат, idempotency key и provider refund id |
-| `analytics_events` | FK `user_id` | UX-события и `nudge_sent` для аналитики/дедупа payment nudges |
-| `google_accounts` | FK `user_id` | post-0.1: refresh token и Drive folder |
+| `users` | PK `telegram_id`; 1:N to `jobs`, `subscriptions`, `payments` | consent, trial counters, F9 notification timestamps, payment email for the receipt |
+| `jobs` | FK `user_id`; nullable FK `subscription_id` | meeting state machine, provider id, Telegram status message, summary cache, quota source |
+| `subscriptions` | FK `user_id`; 1:1 with a successful payment via `payments.subscription_id` | paid period and remaining minutes |
+| `payments` | FK `user_id`, nullable FK `subscription_id` | YooKassa payment intent; direct idempotency by `payment_intent_key`/`provider_payment_charge_id`, legacy Telegram idempotency by `telegram_payment_charge_id` |
+| `recurring_profiles` | PK/FK `user_id`, nullable FK `last_payment_id` | saved YooKassa payment method, status `active|charging|charge_failed|blocked|disabled` and the date of the next auto-charge |
+| `refunds` | FK `payment_id` | two-phase full refund, idempotency key and provider refund id |
+| `analytics_events` | FK `user_id` | UX events and `nudge_sent` for analytics/dedup of payment nudges |
+| `google_accounts` | FK `user_id` | post-0.1: refresh token and Drive folder |
 
-## 3. SQL-схема
+## 3. SQL schema
 
-Разделы 3.1 и 3.3-3.7 описывают фактически применённую схему миграций `00001`-`00015`. Раздел 3.2 — целевой post-0.1 Google-слайс; его таблицы и колонки ещё не заведены в текущих миграциях.
+Sections 3.1 and 3.3-3.7 describe the schema actually applied by migrations `00001`-`00015`. Section 3.2 is the target post-0.1 Google slice; its tables and columns are not yet created in the current migrations.
 
 ### 3.1. `users`
 
@@ -87,28 +87,28 @@ CREATE INDEX users_trial_minutes_done_idx
     WHERE notified_trial_low_at IS NULL;
 ```
 
-- `telegram_id` — PK напрямую. Telegram гарантирует уникальность и неизменность за юзером.
-- `trial_meetings_used` / `trial_meetings_done` — legacy compatibility counters. После включения minute runtime код обновляет их мостом для старых тестов/отчётов, но источник истины для тарификации — minute-поля.
-- `trial_minutes_used` — зарезервированные и фактически занятые минуты триала. `CreateJob` резервирует до 60 минут, ранний `failed` возвращает `reserved_minutes`, terminal billing возвращает unused или добирает extra в пределах лимита.
-- `trial_minutes_done` — finalized chargeable trial minutes. Увеличивается на `jobs.billed_minutes` для `done` и `failed_summary`; питает F9-пуш «триал заканчивается» по реальному расходу, а не по резерву.
-- `consent_at` — момент согласия на обработку ПД (152-ФЗ). До `consent_at IS NOT NULL` приём ссылок заблокирован (enforce в `tg.go`, FSM онбординга).
-- 3 notification timestamps — защита F9 от повторов; при новой подписке логика F9 сравнивает их с `COALESCE(MAX(payments.paid_at WHERE status='succeeded'), '-infinity'::timestamptz)`.
-- `payment_email` — email для чека ЮKassa. Запрашивается перед первой direct payment link оплатой, затем переиспользуется при продлении.
+- `telegram_id` is the PK directly. Telegram guarantees uniqueness and immutability per user.
+- `trial_meetings_used` / `trial_meetings_done` are legacy compatibility counters. After the minute runtime was enabled, the code updates them through a bridge for old tests/reports, but the source of truth for billing is the minute fields.
+- `trial_minutes_used` is the reserved and actually consumed trial minutes. `CreateJob` reserves up to 60 minutes, an early `failed` returns `reserved_minutes`, terminal billing returns the unused part or collects the extra within the limit.
+- `trial_minutes_done` is the finalized chargeable trial minutes. It grows by `jobs.billed_minutes` for `done` and `failed_summary`; it feeds the F9 push "trial is ending" by real consumption, not by the reserve.
+- `consent_at` is the moment of consent to personal data processing (152-FZ). Until `consent_at IS NOT NULL`, accepting links is blocked (enforced in `tg.go`, the onboarding FSM).
+- The 3 notification timestamps protect F9 from repeats; on a new subscription the F9 logic compares them with `COALESCE(MAX(payments.paid_at WHERE status='succeeded'), '-infinity'::timestamptz)`.
+- `payment_email` is the email for the YooKassa receipt. It is requested before the first direct payment link payment and then reused on renewal.
 
-### 3.2. `google_accounts` (post-0.1 target, не применено)
+### 3.2. `google_accounts` (post-0.1 target, not applied)
 
 ```sql
 CREATE TABLE google_accounts (
     user_id       BIGINT      PRIMARY KEY REFERENCES users(telegram_id) ON DELETE CASCADE,
-    refresh_token TEXT        NOT NULL,    -- TODO: BYTEA + AES-GCM в продакшен-доводке (Этап 3), до публичного запуска
-    folder_id     TEXT        NOT NULL,    -- ID папки в Drive юзера
+    refresh_token TEXT        NOT NULL,    -- TODO: BYTEA + AES-GCM in production hardening (Stage 3), before the public launch
+    folder_id     TEXT        NOT NULL,    -- ID of the user's Drive folder
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-- 1:1 с `users`, поэтому `user_id` сам PK.
-- `ON DELETE CASCADE` — при удалении юзера вспомогательные данные едут с ним.
-- Таблица появится отдельной миграцией Google-слайса вместе с `jobs.reauth_from` и `jobs_awaiting_reauth_idx`.
+- 1:1 with `users`, so `user_id` is the PK itself.
+- `ON DELETE CASCADE`: when a user is deleted, the auxiliary data goes with them.
+- The table will appear in a separate Google-slice migration together with `jobs.reauth_from` and `jobs_awaiting_reauth_idx`.
 
 ### 3.3. `subscriptions`
 
@@ -144,16 +144,16 @@ CREATE INDEX subscriptions_expiring_minutes_idx
     ON subscriptions (expires_at)
     WHERE minutes_balance > 0;
 
--- Все периоды юзера (любой баланс) — для §5.1/§5.6 агрегации (SUM баланса, MAX срока).
+-- All of a user's periods (any balance): for the §5.1/§5.6 aggregation (SUM of balance, MAX of expiry).
 CREATE INDEX subscriptions_user_expiry_idx
     ON subscriptions (user_id, expires_at DESC);
 ```
 
-- **Модель «строка на платёж» (1:1, решение 2026-06-14).** Каждый успешный платёж создаёт ОТДЕЛЬНУЮ строку subscriptions (§5.4 НЕ продлевает существующую). Каждая новая строка получает независимый `expires_at = now() + 30 days` (решение 2026-07-03: публично говорим «месяц», внутри считаем фиксированные 30 дней). Следствия: у юзера может быть несколько активных строк одновременно — это норма; refund деактивирует ровно ту строку, что купил возвращаемый платёж (§5.9, детерминированно); `/balance` и F9 (§5.6) **агрегируют по юзеру** (SUM баланса, MAX срока, DISTINCT). Для active recurring `recurring_profiles.next_charge_at` должен совпадать с effective expiry пользователя: `MAX(subscriptions.expires_at)` по активным строкам.
-- `meetings_limit` / `meetings_balance` — legacy compatibility поля. После #7 они больше не являются источником истины для UX/F9/резерва; код поддерживает их мостом до отдельного cleanup.
-- `minutes_limit` и `minutes_balance` — рабочий лимит и остаток подписки. Successful payment пишет `SubscriptionMinutesPerPeriod` (900 минут при 15 часах), `CreateJob` резервирует до 60 минут, terminal billing корректирует остаток по фактической duration.
-- `subscriptions_user_active_minutes_idx` — minute-аналог резерва: активные подписки с остатком минут. `CreateJob` сначала выбирает ближайшую строку с `minutes_balance >= 60`, а частичную строку берёт только если полной нет.
-- `subscriptions_expiring_idx` и `subscriptions_expiring_minutes_idx` partial — для F9-тика «подписка истекает через 3 дня». `subscriptions_user_expiry_idx` — для агрегаций §5.1/§5.6 (MAX expires_at по юзеру, любой баланс).
+- **"Row per payment" model (1:1, decision of 2026-06-14).** Each successful payment creates a SEPARATE subscriptions row (§5.4 does NOT extend an existing one). Each new row gets an independent `expires_at = now() + 30 days` (decision of 2026-07-03: publicly we say "a month", internally we count a fixed 30 days). Consequences: a user may have several active rows at once, this is normal; a refund deactivates exactly the row that the refunded payment bought (§5.9, deterministic); `/balance` and F9 (§5.6) **aggregate per user** (SUM of balance, MAX of expiry, DISTINCT). For active recurring, `recurring_profiles.next_charge_at` must match the user's effective expiry: `MAX(subscriptions.expires_at)` over active rows.
+- `meetings_limit` / `meetings_balance` are legacy compatibility fields. After #7 they are no longer the source of truth for UX/F9/reserve; the code maintains them through a bridge until a separate cleanup.
+- `minutes_limit` and `minutes_balance` are the working limit and remaining balance of the subscription. A successful payment writes `SubscriptionMinutesPerPeriod` (900 minutes at 15 hours), `CreateJob` reserves up to 60 minutes, terminal billing adjusts the balance to the actual duration.
+- `subscriptions_user_active_minutes_idx` is the minute analog for the reserve: active subscriptions with remaining minutes. `CreateJob` first picks the nearest row with `minutes_balance >= 60` and takes a partial row only if there is no full one.
+- `subscriptions_expiring_idx` and `subscriptions_expiring_minutes_idx` are partial, for the F9 tick "subscription expires in 3 days". `subscriptions_user_expiry_idx` is for the §5.1/§5.6 aggregations (MAX expires_at per user, any balance).
 
 ### 3.4. `payments`
 
@@ -179,8 +179,8 @@ CREATE TABLE payments (
     paid_at                     TIMESTAMPTZ,
     provider_paid_at            TIMESTAMPTZ,
     failed_at                   TIMESTAMPTZ,
-    -- Идемпотентность приёма не зависит от дисциплины вызывающего:
-    -- succeeded/refunded обязаны нести charge_id (на нём держится ON CONFLICT §5.4).
+    -- Intake idempotency does not depend on the caller's discipline:
+    -- succeeded/refunded must carry a charge_id (ON CONFLICT §5.4 relies on it).
     CHECK (
         telegram_payment_charge_id IS NOT NULL
         OR provider_payment_charge_id IS NOT NULL
@@ -205,13 +205,13 @@ CREATE UNIQUE INDEX payments_intent_key_idx
     WHERE payment_intent_key IS NOT NULL;
 ```
 
-- PK = `id BIGSERIAL`, потому что запись возможна до получения charge id.
-- `payment_intent_key` — наш `Idempotence-Key` для `POST /v3/payments`; уникальность защищает повтор создания payment intent.
-- `provider_payment_charge_id` — настоящий `payment.id` ЮKassa в direct flow; по нему polling и REST-refund. Уникальность защищает от дубля provider payment.
-- `telegram_payment_charge_id UNIQUE` — legacy-идемпотентность ретраев Telegram Payments; в direct flow может быть NULL.
-- `metadata`, `raw_payload`, `provider_paid_at`, `payment_method_id`, `fiscal_receipt_url` нужны для сверок, fallback-lookup и рекуррента. `payment_method_id` заполняем только при `metadata.auto_renew=true`, `payment_method.saved=true` и непустом `payment_method.id`.
-- Частичные возвраты вне скоупа MVP: `partially_refunded` и `amount_refunded` не заводим.
-- `ON DELETE RESTRICT` — нельзя удалить юзера с историей платежей. Удаление по 152-ФЗ — отдельная процедура анонимизации (см. §6: ПДн есть и в `raw_payload`/`metadata`, не только в `users`).
+- PK = `id BIGSERIAL`, because a row can be written before the charge id is known.
+- `payment_intent_key` is our `Idempotence-Key` for `POST /v3/payments`; uniqueness protects against a repeated creation of the payment intent.
+- `provider_payment_charge_id` is the real YooKassa `payment.id` in the direct flow; used for polling and REST refund. Uniqueness protects against a duplicate provider payment.
+- `telegram_payment_charge_id UNIQUE` is the legacy idempotency of Telegram Payments retries; in the direct flow it may be NULL.
+- `metadata`, `raw_payload`, `provider_paid_at`, `payment_method_id`, `fiscal_receipt_url` are needed for reconciliation, fallback lookup and recurring. We fill `payment_method_id` only with `metadata.auto_renew=true`, `payment_method.saved=true` and a non-empty `payment_method.id`.
+- Partial refunds are out of MVP scope: we do not create `partially_refunded` and `amount_refunded`.
+- `ON DELETE RESTRICT`: a user with payment history cannot be deleted. Deletion under 152-FZ is a separate anonymization procedure (see §6: personal data is also in `raw_payload`/`metadata`, not only in `users`).
 
 ### 3.4a. `recurring_profiles`
 
@@ -234,10 +234,10 @@ CREATE INDEX recurring_profiles_due_idx
     WHERE status IN ('active','charge_failed');
 ```
 
-- `payment_method_id` — reusable `payment_method.id` ЮKassa. Храним только после payment с `metadata.auto_renew=true` и только если ЮKassa вернула `payment_method.saved=true`; при `disabled` очищаем в `NULL`, чтобы отключение автопродления удаляло токен на нашей стороне.
-- `status='active'` означает, что worker может пытаться списать следующий период. `charging` — in-flight попытка после локального intent и до результата poller. `charge_failed` оставляет профиль для retry; `blocked` останавливает автосписания до ручной проверки; `disabled` означает пользовательское отключение.
-- `next_charge_at` для `status='active'` равен effective expiry пользователя: `MAX(expires_at)` по активным subscriptions, чтобы `/balance` и дата следующего списания совпадали. Для `charge_failed` это время следующего retry, обычно `now()+24h`; `blocked` не переносится на новый retry. Worker создаёт новый payment, а не меняет текущую subscription.
-- `last_payment_id` указывает на payment, по которому профиль был создан или обновлён.
+- `payment_method_id` is the reusable YooKassa `payment_method.id`. We store it only after a payment with `metadata.auto_renew=true` and only if YooKassa returned `payment_method.saved=true`; on `disabled` we clear it to `NULL`, so that disabling auto-renewal erases the token on our side.
+- `status='active'` means the worker may try to charge the next period. `charging` is an in-flight attempt after the local intent and before the poller result. `charge_failed` keeps the profile for retry; `blocked` stops auto-charges until a manual check; `disabled` means a user-initiated disable.
+- `next_charge_at` for `status='active'` equals the user's effective expiry: `MAX(expires_at)` over active subscriptions, so that `/balance` and the next charge date match. For `charge_failed` it is the next retry time, usually `now()+24h`; `blocked` is not moved to a new retry. The worker creates a new payment and does not change the current subscription.
+- `last_payment_id` points to the payment by which the profile was created or updated.
 
 ### 3.5. `refunds`
 
@@ -255,17 +255,17 @@ CREATE TABLE refunds (
     completed_at        TIMESTAMPTZ
 );
 
--- Идемпотентность финализации: provider_refund_id от ЮKassa уникален, но NULL на стадии pending.
+-- Finalization idempotency: the YooKassa provider_refund_id is unique, but NULL at the pending stage.
 CREATE UNIQUE INDEX refunds_provider_idx ON refunds (provider_refund_id) WHERE provider_refund_id IS NOT NULL;
--- Один активный возврат на платёж — закрывает гонку двойного BeginRefund ДО обращения к ЮKassa.
+-- One active refund per payment: closes the double BeginRefund race BEFORE calling YooKassa.
 CREATE UNIQUE INDEX refunds_active_idx ON refunds (payment_id) WHERE status IN ('pending','succeeded');
 CREATE INDEX refunds_payment_idx ON refunds (payment_id);
 ```
 
-- Возврат двухфазный (§5.9): `pending` создаётся до вызова ЮKassa, `FinalizeRefund` заполняет `provider_refund_id` и статус после ответа.
-- `idempotence_key UNIQUE` — наш ключ для заголовка ЮKassa `Idempotence-Key`, переживает краш/ретрай.
-- `provider_refund_id` nullable и уникален только когда не NULL; `refunds_active_idx` держит MVP-инвариант один активный/успешный refund на платёж.
-- `status` включает `canceled` — ЮKassa может завершить возврат в этом статусе (`api/yookassa/API.md` §5).
+- The refund is two-phase (§5.9): `pending` is created before calling YooKassa, `FinalizeRefund` fills `provider_refund_id` and the status after the response.
+- `idempotence_key UNIQUE` is our key for the YooKassa `Idempotence-Key` header, it survives a crash/retry.
+- `provider_refund_id` is nullable and unique only when not NULL; `refunds_active_idx` holds the MVP invariant of one active/successful refund per payment.
+- `status` includes `canceled`: YooKassa may complete a refund in this status (`api/yookassa/API.md` §5).
 
 ### 3.6. `analytics_events`
 
@@ -288,10 +288,10 @@ CREATE INDEX analytics_events_type_time_idx
     ON analytics_events (event_type, occurred_at DESC);
 ```
 
-- `event_type` — базовый тип события: `bot_start`, `consent_declined`, `subscription_viewed`, `payment_requested`, `nudge_sent`.
-- `event_key` — уточнение события. Для `nudge_sent` хранит класс дожима (`payment_followup`, `sub_low_balance`, `sub_empty_balance`, legacy `trial_ending`/`sub_expiring`/`sub_expired`). Не уникален: повторные действия и новый платёжный цикл должны оставаться в истории.
-- `metadata` — allowlist на уровне storage: для `nudge_sent` сохраняется только `{"class":"..."}`, для остальных #12-событий `{}`. Meeting URL, email, payment/provider ids сюда не пишем.
-- `ON DELETE RESTRICT` — аналитическая история блокирует физический DELETE user так же, как платежи/джобы; публичное удаление ПДн остаётся задачей анонимизации, не cascade-delete.
+- `event_type` is the base event type: `bot_start`, `consent_declined`, `subscription_viewed`, `payment_requested`, `nudge_sent`.
+- `event_key` refines the event. For `nudge_sent` it stores the nudge class (`payment_followup`, `sub_low_balance`, `sub_empty_balance`, legacy `trial_ending`/`sub_expiring`/`sub_expired`). Not unique: repeated actions and a new payment cycle must stay in the history.
+- `metadata` is an allowlist at the storage level: for `nudge_sent` only `{"class":"..."}` is saved, for the other #12 events `{}`. We do not write the meeting URL, email or payment/provider ids here.
+- `ON DELETE RESTRICT`: the analytics history blocks a physical DELETE of a user just like payments/jobs do; public deletion of personal data remains an anonymization task, not a cascade delete.
 
 ### 3.7. `jobs`
 
@@ -308,9 +308,9 @@ CREATE TABLE jobs (
                                        )),
     is_trial               BOOLEAN     NOT NULL,
     external_job_id        TEXT,
-    provider               TEXT        NOT NULL DEFAULT '',  -- поставщик-создатель (mock|speech2text|mymeet): Fetch/Cancel резолвят его по этому полю, а не по активному TRANSCRIPTION_PROVIDER — иначе после смены провайдера чужой external_job_id даёт HTTP 400 (заведена миграцией 00008, job-provider-слайс)
-    status_message_id      BIGINT,      -- id Telegram-сообщения статуса; бот редактирует его по ходу обработки; NULL — сообщения нет (заведена миграцией 00006, lifecycle-controls)
-    summary_md             TEXT,        -- кэш сгенерированного конспекта F3 ДО доставки (миграция 00007): сбой Deliver не повлечёт повторный платный Summarize на ретрае (orchestrator summarizeJob); NULL — не сгенерировано / summary-off
+    provider               TEXT        NOT NULL DEFAULT '',  -- creating provider (mock|speech2text|mymeet): Fetch/Cancel resolve it by this field, not by the active TRANSCRIPTION_PROVIDER, otherwise after a provider switch a foreign external_job_id gives HTTP 400 (added by migration 00008, job-provider slice)
+    status_message_id      BIGINT,      -- id of the Telegram status message; the bot edits it while processing; NULL: no message (added by migration 00006, lifecycle-controls)
+    summary_md             TEXT,        -- cache of the generated F3 summary BEFORE delivery (migration 00007): a Deliver failure will not cause a repeated paid Summarize on retry (orchestrator summarizeJob); NULL: not generated / summary-off
     reserved_minutes       INTEGER     NOT NULL DEFAULT 0,
     billed_minutes         INTEGER     NOT NULL DEFAULT 0,
     duration_seconds       INTEGER,
@@ -344,62 +344,62 @@ CREATE INDEX jobs_worker_idx
     WHERE status NOT IN ('done','failed_join','failed','failed_summary','awaiting_reauth');
 ```
 
-- `subscription_id` указывает, против какой подписки списано; CHECK гарантирует `is_trial=true ⇔ subscription_id IS NULL`.
-- `raw_provider_response JSONB` — сырой ответ поставщика для post-mortem.
-- `jobs_active_dedup_idx` partial — защита от дублей только среди живых Job'ов, легитимные повторы (regular meeting room) разрешены. **Заведён миграцией `00005`** (payments-слайс). `failed_summary` входит в `WHERE status NOT IN (...)` — финальный статус освобождает URL для повторной отправки.
-- `jobs_worker_idx` partial — выборка для `FOR UPDATE SKIP LOCKED` без сканирования финальных Job'ов. `awaiting_reauth` исключён заранее: worker его не должен подхватывать в будущем Google-слайсе. **Уже создан** в миграции `00003` и пересоздан в `00004` с финальным `WHERE`.
-- `jobs_user_history_idx` — потребитель появился в demo-prep слайсе: `Storage.ListUserJobs` (`WHERE user_id=$1 AND created_at > $2 ORDER BY created_at DESC`) питает панель «Мои звонки» (история звонков юзера за последнюю неделю + статус каждого + повторная доставка). **Индекс пока НЕ заведён в миграциях** — на демо-данных (десятки строк) запрос идёт seq scan'ом, это не блокер. Завести отдельной forward-миграцией при росте данных или если панель истории станет горячим путём.
-- **Колонка `provider` заведена миграцией `00008`** (job-provider-слайс, `ALTER TABLE jobs ADD COLUMN provider TEXT NOT NULL DEFAULT ''`). Фиксирует поставщика-создателя для резолва Fetch/Cancel в панели «Мои звонки».
-- **Колонки квот `subscription_id`/`is_trial` заведены миграцией `00005`** (payments-слайс, `ALTER TABLE jobs` + CHECK `jobs_quota_check`). `reauth_from` ещё нет — её добавит отдельный post-0.1 Google-слайс.
-- **Minute-колонки `reserved_minutes`/`billed_minutes`/`duration_seconds` заведены миграцией `00009`**. `reserved_minutes` хранит резерв при создании Job, `billed_minutes` — фактически списанные минуты после terminal billing, `duration_seconds` — billing-длительность в секундах или `NULL` для legacy rows.
-- `recording_started_at` / `recording_finished_at` заведены миграцией `00009`: observable окно записи по state machine. Для Speech2Text это основной источник billing duration, потому что `result/json chunks[].time.to` отражает ASR-таймкоды речи, а не длительность присутствия бота на встрече.
-- `jobs_awaiting_reauth_idx`, `reauth_from` и `google_accounts` — post-0.1 Google target; applied migrations их ещё не заводят.
-- Рабочие фазы release 0.1: `joining` = бот подключается, `recording` = бот на встрече, `processing` = бот вышел и идёт расшифровка, `summarizing` = транскрипт доставлен и готовится саммари. `transcribed`/`failed_join`/`awaiting_reauth` остаются dormant/target values в CHECK.
+- `subscription_id` shows which subscription the job was charged against; the CHECK guarantees `is_trial=true` if and only if `subscription_id IS NULL`.
+- `raw_provider_response JSONB` is the raw provider response for post-mortem.
+- `jobs_active_dedup_idx` is partial: protection against duplicates only among live Jobs, legitimate repeats (a regular meeting room) are allowed. **Created by migration `00005`** (payments slice). `failed_summary` is part of `WHERE status NOT IN (...)`: the final status frees the URL for resubmission.
+- `jobs_worker_idx` is partial: the selection for `FOR UPDATE SKIP LOCKED` without scanning final Jobs. `awaiting_reauth` is excluded in advance: the worker must not pick it up in the future Google slice. **Already created** in migration `00003` and recreated in `00004` with the final `WHERE`.
+- `jobs_user_history_idx`: its consumer appeared in the demo-prep slice: `Storage.ListUserJobs` (`WHERE user_id=$1 AND created_at > $2 ORDER BY created_at DESC`) feeds the "My calls" panel (the user's call history for the last week + the status of each + re-delivery). **The index is NOT yet created in migrations**: on demo data (tens of rows) the query does a seq scan, this is not a blocker. Create it with a separate forward migration when the data grows or if the history panel becomes a hot path.
+- **The `provider` column was added by migration `00008`** (job-provider slice, `ALTER TABLE jobs ADD COLUMN provider TEXT NOT NULL DEFAULT ''`). It records the creating provider for resolving Fetch/Cancel in the "My calls" panel.
+- **The quota columns `subscription_id`/`is_trial` were added by migration `00005`** (payments slice, `ALTER TABLE jobs` + CHECK `jobs_quota_check`). `reauth_from` does not exist yet: it will be added by a separate post-0.1 Google slice.
+- **The minute columns `reserved_minutes`/`billed_minutes`/`duration_seconds` were added by migration `00009`**. `reserved_minutes` holds the reserve at Job creation, `billed_minutes` the minutes actually charged after terminal billing, `duration_seconds` the billing duration in seconds or `NULL` for legacy rows.
+- `recording_started_at` / `recording_finished_at` were added by migration `00009`: the observable recording window per the state machine. For Speech2Text this is the main source of billing duration, because `result/json chunks[].time.to` reflects the ASR timecodes of speech, not the duration of the bot's presence in the meeting.
+- `jobs_awaiting_reauth_idx`, `reauth_from` and `google_accounts` are the post-0.1 Google target; the applied migrations do not create them yet.
+- Working phases of release 0.1: `joining` = the bot is connecting, `recording` = the bot is in the meeting, `processing` = the bot left and transcription is running, `summarizing` = the transcript is delivered and the summary is being prepared. `transcribed`/`failed_join`/`awaiting_reauth` remain dormant/target values in the CHECK.
 
-### 3.8. Backfill и rollback `00009`
+### 3.8. Backfill and rollback of `00009`
 
-Миграция `00009_add_minute_quotas.sql` добавила minute-поля рядом с legacy meeting-полями и выполнила backfill:
+Migration `00009_add_minute_quotas.sql` added the minute fields next to the legacy meeting fields and ran a backfill:
 
 - `users.trial_minutes_used = trial_meetings_used * 60`.
-- `users.trial_minutes_done = max(trial_meetings_done * 60, chargeable trial jobs * 60)`, где chargeable trial jobs = `jobs.is_trial=true AND status IN ('done','failed_summary')`.
+- `users.trial_minutes_done = max(trial_meetings_done * 60, chargeable trial jobs * 60)`, where chargeable trial jobs = `jobs.is_trial=true AND status IN ('done','failed_summary')`.
 - `subscriptions.minutes_limit = meetings_limit * 60`.
 - `subscriptions.minutes_balance = meetings_balance * 60`.
-- `jobs.reserved_minutes = 60` для `created|joining|recording|processing|transcribed|summarizing|awaiting_reauth|done|failed_summary`; `0` для `failed|failed_join`.
-- `jobs.billed_minutes = 60` для `done|failed_summary`; `0` для остальных статусов.
-- `jobs.duration_seconds = NULL` для всех legacy rows.
+- `jobs.reserved_minutes = 60` for `created|joining|recording|processing|transcribed|summarizing|awaiting_reauth|done|failed_summary`; `0` for `failed|failed_join`.
+- `jobs.billed_minutes = 60` for `done|failed_summary`; `0` for the other statuses.
+- `jobs.duration_seconds = NULL` for all legacy rows.
 
-Причина включить dormant `transcribed|awaiting_reauth` в reserve backfill: эти статусы разрешены CHECK и не являются terminal failure. Если такая строка появится до runtime switch, она должна продолжиться с сохранённым резервом.
+Reason to include the dormant `transcribed|awaiting_reauth` in the reserve backfill: these statuses are allowed by the CHECK and are not a terminal failure. If such a row appears before the runtime switch, it must continue with its saved reserve.
 
-Причина считать `failed_summary` в user-level done backfill: по hourly-контракту сбой саммари после доставки транскрипта является оказанной услугой. Legacy `trial_meetings_done` инкрементировался только на `done`, поэтому агрегат по jobs защищает F9 и будущий баланс от занижения.
+Reason to count `failed_summary` in the user-level done backfill: under the hourly contract a summary failure after the transcript was delivered is a rendered service. The legacy `trial_meetings_done` was incremented only on `done`, so the aggregate over jobs protects F9 and the future balance from understatement.
 
-Историческое ограничение schema-only deploy: `00009` не предназначалась для отдельного deploy на live writes без последующего catch-up, потому что старый runtime писал только `meetings_*`. После включения minute runtime новые rows пишут minute-поля сразу.
+Historical limitation of a schema-only deploy: `00009` was not meant for a separate deploy under live writes without a subsequent catch-up, because the old runtime wrote only `meetings_*`. After the minute runtime was enabled, new rows write the minute fields right away.
 
-Down migration `00009` структурная: удаляет minute-индексы и minute-колонки, legacy `meetings_*` остаются. Это безопасно только до включения minute runtime; semantic rollback после реального minute-billing lossy и требует отдельного owner-gate.
+The down migration of `00009` is structural: it drops the minute indexes and minute columns, the legacy `meetings_*` remain. This is safe only before the minute runtime is enabled; a semantic rollback after real minute billing is lossy and requires a separate owner gate.
 
-## 4. Go-типы для `domain.go`
+## 4. Go types for `domain.go`
 
-`domain.go` — источник правды по Go-структурам; этот раздел фиксирует только соответствие БД и nullable-границы, чтобы не дублировать код.
+`domain.go` is the source of truth for the Go structs; this section records only the mapping to the DB and the nullable boundaries, to avoid duplicating code.
 
-| Go-тип | Таблица | Важные соответствия |
+| Go type | Table | Important mappings |
 |---|---|---|
-| `User` | `users` | `ConsentAt` и `Notified*At` nullable; trial counters non-null |
-| `Job` | `jobs` | `SubscriptionID`, `ExternalJobID`, `StatusMessageID`, `SummaryMD` nullable; `Provider` non-null default `''` |
-| `Subscription` | `subscriptions` | balance/limit non-null, `expires_at > paid_at` |
-| `Payment` | `payments` | nullable charge/provider/receipt/raw fields; `Amount` в копейках `int64` |
-| `Refund` | `refunds` | `ProviderRefundID`, `Reason`, `CompletedAt` nullable |
+| `User` | `users` | `ConsentAt` and `Notified*At` are nullable; trial counters are non-null |
+| `Job` | `jobs` | `SubscriptionID`, `ExternalJobID`, `StatusMessageID`, `SummaryMD` are nullable; `Provider` is non-null default `''` |
+| `Subscription` | `subscriptions` | balance/limit are non-null, `expires_at > paid_at` |
+| `Payment` | `payments` | nullable charge/provider/receipt/raw fields; `Amount` in kopecks as `int64` |
+| `Refund` | `refunds` | `ProviderRefundID`, `Reason`, `CompletedAt` are nullable |
 
-Статусы в БД шире текущего Go-кода: `transcribed`, `failed_join`, `awaiting_reauth` разрешены CHECK как target/dormant values. В release 0.1 рабочие статусы Go: `created`, `joining`, `recording`, `processing`, `summarizing`, `done`, `failed`, `failed_summary`. `GoogleAccount`, `JobAwaitingReauth` и `reauth_from` относятся к post-0.1 Google-слайсу.
+The statuses in the DB are wider than the current Go code: `transcribed`, `failed_join`, `awaiting_reauth` are allowed by the CHECK as target/dormant values. In release 0.1 the working Go statuses are: `created`, `joining`, `recording`, `processing`, `summarizing`, `done`, `failed`, `failed_summary`. `GoogleAccount`, `JobAwaitingReauth` and `reauth_from` belong to the post-0.1 Google slice.
 
-## 5. Транзакционные паттерны (критические узлы)
+## 5. Transactional patterns (critical nodes)
 
-### 5.1. Создание Job с резервом минут
+### 5.1. Creating a Job with a minute reserve
 
-Атомарный `UPDATE … WHERE used < limit` ловит гонку «два сообщения за 200мс» физикой БД.
+An atomic `UPDATE ... WHERE used < limit` catches the "two messages within 200ms" race by DB physics.
 
 ```sql
--- Подписка (модель 1:1: у юзера может быть несколько активных строк; берём
--- ближайшую строку с полным 60-минутным резервом, если такая есть; частичный
--- остаток используем только когда полной строки нет).
+-- Subscription (1:1 model: a user may have several active rows; we take the
+-- nearest row with a full 60-minute reserve if there is one; we use a partial
+-- remainder only when there is no full row).
 WITH selected AS (
     SELECT id, LEAST(60, minutes_balance) AS reserved_minutes
     FROM subscriptions
@@ -414,34 +414,34 @@ FROM selected
 WHERE s.id = selected.id
 RETURNING s.id, selected.reserved_minutes;
 
--- Если подписка не списалась — триал
+-- If nothing was charged to a subscription: trial
 UPDATE users
 SET trial_minutes_used = trial_minutes_used + LEAST(60, $2 - trial_minutes_used)
 WHERE telegram_id = $1 AND trial_minutes_used < $2  -- $2 = trialLimitMinutes
 RETURNING LEAST(60, $2 - (trial_minutes_used - LEAST(60, $2 - trial_minutes_used))) AS reserved_minutes;
 ```
 
-Если первый UPDATE вернул строку — `INSERT INTO jobs (is_trial=false, subscription_id=$id, reserved_minutes=$reserved)`. Если нет, и второй UPDATE вернул строку — `INSERT INTO jobs (is_trial=true, subscription_id=NULL, reserved_minutes=$reserved)`. Если оба пусто — отказ. Всё в одной транзакции pgx. **`FOR UPDATE` на выборе подписки обязательно** — иначе два параллельных запроса выберут одну и ту же подписку.
+If the first UPDATE returned a row: `INSERT INTO jobs (is_trial=false, subscription_id=$id, reserved_minutes=$reserved)`. If not, and the second UPDATE returned a row: `INSERT INTO jobs (is_trial=true, subscription_id=NULL, reserved_minutes=$reserved)`. If both are empty: reject. All in one pgx transaction. **`FOR UPDATE` on the subscription selection is mandatory**, otherwise two parallel requests will pick the same subscription.
 
-### 5.2. Возврат резерва при раннем `failed`
+### 5.2. Reserve refund on an early `failed`
 
-**Guard по статусу обязателен** — иначе два параллельных тика дадут lost-update (баланс отрастёт).
+**A status guard is mandatory**, otherwise two parallel ticks cause a lost update (the balance grows).
 
 ```sql
 BEGIN;
 
--- Смена статуса с защитой от двойного перехода
+-- Status change with a double-transition guard
 UPDATE jobs
 SET status = 'failed', updated_at = now()
 WHERE id = $1 AND status IN ('created','joining','recording','processing')
 RETURNING is_trial, subscription_id, user_id;
 
--- Откат делаем ТОЛЬКО если RowsAffected = 1
--- Для триала (is_trial=true)
+-- Roll back ONLY if RowsAffected = 1
+-- For a trial (is_trial=true)
 UPDATE users SET trial_minutes_used = trial_minutes_used - $reserved_minutes
 WHERE telegram_id = $user_id;
 
--- ИЛИ для подписки (is_trial=false)
+-- OR for a subscription (is_trial=false)
 UPDATE subscriptions
 SET minutes_balance = LEAST(minutes_limit, minutes_balance + $reserved_minutes)
 WHERE id = $subscription_id;
@@ -449,23 +449,23 @@ WHERE id = $subscription_id;
 COMMIT;
 ```
 
-Если первый UPDATE вернул `RowsAffected = 0` — это второй тик, который пытается «откатить» уже закрытый Job. Не делаем ничего.
+If the first UPDATE returned `RowsAffected = 0`, this is a second tick trying to "roll back" an already closed Job. Do nothing.
 
-**Из каких статусов какой исход (полная спецификация возврата/списания):**
-- ручная отмена `created|joining` → `failed` **с откатом резерва** через `CancelJob`; `recording` вручную не отменяется, а останавливается как stop-result path ниже.
-- `created`/`joining`/`recording`/`processing` → `failed` **с откатом резерва**, если transcript не получен (provider не принял задачу, бот не дошёл, stop не дал результата или транскрипция не получилась). Guard выше перечисляет именно эти no-result статусы.
-- `recording` manual/watchdog stop → `processing` с marker `jobs.last_error='manual_stop'|'watchdog_stop'`; если после stop provider отдаёт непустой transcript, путь становится billable `done`/`failed_summary`, а не refund.
-- `summarizing` → `failed_summary` **без раннего refund**: transcript-only файл доставлен, но summary не сформировалась. Отдельный переход — guard `WHERE id=$1 AND status='summarizing'`; terminal billing финализирует `billed_minutes` по `duration_seconds`.
-- `failed_summary` → `done` возможен только через `SetTerminalJobSummary` после пользовательского восстановления конспекта из «Мои звонки»: обновляется `summary_md`, очищается `last_error`, billing/квоты не пересчитываются.
-- `awaiting_reauth` — не финальный, не фейлится по таймауту (ждёт `/reconnect`), резерв держится.
+**Which statuses lead to which outcome (full refund/charge specification):**
+- manual cancel `created|joining` to `failed` **with a reserve rollback** via `CancelJob`; `recording` is not canceled manually but stopped through the stop-result path below.
+- `created`/`joining`/`recording`/`processing` to `failed` **with a reserve rollback** if no transcript was received (the provider did not accept the task, the bot did not join, stop gave no result or transcription failed). The guard above lists exactly these no-result statuses.
+- `recording` manual/watchdog stop to `processing` with the marker `jobs.last_error='manual_stop'|'watchdog_stop'`; if after the stop the provider returns a non-empty transcript, the path becomes a billable `done`/`failed_summary`, not a refund.
+- `summarizing` to `failed_summary` **without an early refund**: the transcript-only file was delivered but the summary was not produced. A separate transition with the guard `WHERE id=$1 AND status='summarizing'`; terminal billing finalizes `billed_minutes` by `duration_seconds`.
+- `failed_summary` to `done` is possible only via `SetTerminalJobSummary` after the user restores the summary from the "My calls" panel: `summary_md` is updated, `last_error` is cleared, billing/quotas are not recalculated.
+- `awaiting_reauth` is not final, does not fail by timeout (it waits for `/reconnect`), the reserve is held.
 
-То есть полный возврат `reserved_minutes` делается ТОЛЬКО на переходах из ранних статусов до оказания услуги; поздний сбой саммари идет через terminal billing. Это критично для money-логики — не реализовать возврат единым guard'ом на все статусы.
+So a full refund of `reserved_minutes` is done ONLY on transitions from early statuses before the service is rendered; a late summary failure goes through terminal billing. This is critical for the money logic: do not implement the refund as a single guard for all statuses.
 
-> **Реализовано (слайс provider-start-timeout + stop-result):** `FailJobWithQuotaRefund` несёт guard `WHERE id=$1 AND status IN ('created','joining','recording','processing')` — активные фазы до billable terminal result. `created` добавлен для submit-fail/start-timeout: provider ещё не принял задачу, но квота уже зарезервирована в `CreateJob`, поэтому её нужно вернуть. `CancelJob` намеренно уже и работает только для ручной отмены `created|joining`. `failJob` зовётся из `submitJob` (permanent HTTP submit error, retry-limit, start-timeout) и `pollJob` (StatusFailed, joining-timeout, no-result stop). Для s2t stop-result `last_error` временно хранит marker `manual_stop|watchdog_stop`: `StatusFailed` после такого stop сначала пробует `Fetch`; непустой transcript ведёт в `done`/`failed_summary` и terminal billing, пустой transcript или fetch-fail — в `failed` с refund. Статус `summarizing` в guard **намеренно исключён**: транскрипт уже доставлен, встреча использована, сбой саммари идёт через `SetJobFailedSummary` без отката (§5.2, `architecture.md` §8.4).
+> **Implemented (slice provider-start-timeout + stop-result):** `FailJobWithQuotaRefund` carries the guard `WHERE id=$1 AND status IN ('created','joining','recording','processing')`: the active phases before a billable terminal result. `created` was added for submit-fail/start-timeout: the provider has not yet accepted the task, but the quota was already reserved in `CreateJob`, so it must be returned. `CancelJob` is intentionally narrower and works only for manual cancel of `created|joining`. `failJob` is called from `submitJob` (permanent HTTP submit error, retry-limit, start-timeout) and `pollJob` (StatusFailed, joining-timeout, no-result stop). For an s2t stop-result, `last_error` temporarily holds the marker `manual_stop|watchdog_stop`: `StatusFailed` after such a stop first tries `Fetch`; a non-empty transcript leads to `done`/`failed_summary` and terminal billing, an empty transcript or a fetch failure leads to `failed` with a refund. The `summarizing` status is **intentionally excluded** from the guard: the transcript is already delivered, the meeting is used, and a summary failure goes through `SetJobFailedSummary` without a rollback (§5.2, `architecture.md` §8.4).
 
-### 5.3. Перевод в `done`
+### 5.3. Transition to `done`
 
-Резерв уже сделан, но terminal billing корректирует итог по фактической длительности.
+The reserve is already made, but terminal billing adjusts the result to the actual duration.
 
 ```sql
 UPDATE jobs
@@ -478,13 +478,13 @@ WHERE id = $1
   AND billed_minutes = 0
 ```
 
-`SetJobDone` допускает `joining|recording|processing|summarizing`, чтобы покрыть s2t-fallback и перескок фаз polling'ом. Полная версия terminal billing — §5.7.
+`SetJobDone` allows `joining|recording|processing|summarizing` to cover the s2t fallback and polling skipping phases. The full terminal billing version is in §5.7.
 
-### 5.4. Идемпотентность платежа (модель 1:1: платёж = строка подписки)
+### 5.4. Payment idempotency (1:1 model: payment = subscription row)
 
-Direct payment links создают строку `payments.status='pending'` до оплаты. Финализация идёт только после `GET /v3/payments/{id}` со статусом `succeeded` и `paid=true`.
+Direct payment links create a `payments.status='pending'` row before payment. Finalization happens only after `GET /v3/payments/{id}` returns status `succeeded` and `paid=true`.
 
-**Создание direct pending payment:**
+**Creating a direct pending payment:**
 
 ```sql
 INSERT INTO payments (
@@ -492,18 +492,18 @@ INSERT INTO payments (
     payment_intent_key, invoice_payload, metadata, raw_payload
 )
 VALUES ($1, 'pending', $2, $3, $4, $5, $6, $7)
-ON CONFLICT DO NOTHING; -- provider charge или intent key
+ON CONFLICT DO NOTHING; -- provider charge or intent key
 ```
 
-Direct flow двухфазный: сначала `StartDirectPaymentIntent` под `users FOR UPDATE` создаёт локальный
-intent без `provider_payment_charge_id`, чтобы второй параллельный callback не сделал второй внешний
-`POST /v3/payments`. После успешного ответа ЮKassa `AttachDirectProviderPayment` дозаполняет
-`provider_payment_charge_id = payment.id`, `raw_payload`, `metadata`, сумму и currency. Если внешний
-POST упал до provider id, `FailDirectPaymentIntent` переводит локальный intent в `failed`.
+The direct flow is two-phase: first `StartDirectPaymentIntent` under `users FOR UPDATE` creates a local
+intent without `provider_payment_charge_id`, so that a second parallel callback does not make a second external
+`POST /v3/payments`. After a successful YooKassa response `AttachDirectProviderPayment` fills in
+`provider_payment_charge_id = payment.id`, `raw_payload`, `metadata`, amount and currency. If the external
+POST failed before the provider id, `FailDirectPaymentIntent` moves the local intent to `failed`.
 
-Если конфликт уже есть, legacy `CreatePendingPayment` читает существующую строку и сверяет `user_id`, сумму, currency, provider id и intent key. Конфликт с другой семантикой — ошибка, а не молчаливое переиспользование.
+If a conflict already exists, the legacy `CreatePendingPayment` reads the existing row and compares `user_id`, amount, currency, provider id and intent key. A conflict with different semantics is an error, not a silent reuse.
 
-**Финализация polling'ом:**
+**Finalization by polling:**
 
 ```sql
 BEGIN;
@@ -513,8 +513,8 @@ FROM payments
 WHERE provider_payment_charge_id = $1
 FOR UPDATE;
 
--- если статус уже succeeded/refunded -> changed=false
--- если статус не pending или subscription_id уже есть -> ошибка инварианта
+-- if the status is already succeeded/refunded -> changed=false
+-- if the status is not pending or subscription_id already exists -> invariant error
 
 INSERT INTO subscriptions (user_id, paid_at, expires_at,
     meetings_limit, meetings_balance, minutes_limit, minutes_balance)
@@ -536,7 +536,7 @@ WHERE id = $payment_id AND status = 'pending' AND subscription_id IS NULL;
 COMMIT;
 ```
 
-`PaymentPoller` до транзакции сверяет ответ ЮKassa с локальным intent: provider id, amount, currency и `metadata.user_id`. Для direct/recurring payment с `payment_intent_key` metadata user id обязательна; пустая metadata допустима только для legacy Telegram payment. Если payment создан с `metadata.auto_renew=true` и ЮKassa вернула `payment_method.saved=true`, финализация сохраняет `payments.payment_method_id` и upsert'ит `recurring_profiles` с `next_charge_at = MAX(active subscriptions.expires_at)`, обновляя `consent_at`. Для recurring payment без нового `saved=true` финализация обновляет существующий профиль: `status='active'`, новый `next_charge_at`, `last_payment_id`, `attempts_count=0`, `last_error=NULL`, но только если профиль не `disabled` и не `blocked`. Повторный polling того же `payment.id` возвращает `changed=false` и не создаёт вторую подписку.
+Before the transaction, `PaymentPoller` compares the YooKassa response with the local intent: provider id, amount, currency and `metadata.user_id`. For a direct/recurring payment with a `payment_intent_key` the metadata user id is mandatory; empty metadata is allowed only for a legacy Telegram payment. If the payment was created with `metadata.auto_renew=true` and YooKassa returned `payment_method.saved=true`, finalization saves `payments.payment_method_id` and upserts `recurring_profiles` with `next_charge_at = MAX(active subscriptions.expires_at)`, updating `consent_at`. For a recurring payment without a new `saved=true`, finalization updates the existing profile: `status='active'`, new `next_charge_at`, `last_payment_id`, `attempts_count=0`, `last_error=NULL`, but only if the profile is not `disabled` and not `blocked`. Repeated polling of the same `payment.id` returns `changed=false` and does not create a second subscription.
 
 
 **Recurring worker (#9d):**
@@ -577,17 +577,17 @@ WHERE rp.user_id = due.user_id
 RETURNING due.user_id, due.payment_method_id, due.status, due.next_charge_at;
 ```
 
-Для каждой due-строки worker строит `payment_intent_key = recurring:<user_id>:<next_charge_at_unix>` по исходному `next_charge_at`. `StartRecurringPaymentIntent` в одной транзакции проверяет текущий профиль, переводит `active|charge_failed -> charging` и создаёт локальный `payments.status='pending'` intent без provider id. Если пользователь уже отключил профиль, профиль заблокирован или `next_charge_at` изменился, метод возвращает `created=false`, внешний `POST /payments` не выполняется.
+For each due row the worker builds `payment_intent_key = recurring:<user_id>:<next_charge_at_unix>` from the original `next_charge_at`. `StartRecurringPaymentIntent` in one transaction checks the current profile, moves `active|charge_failed -> charging` and creates a local `payments.status='pending'` intent without a provider id. If the user has already disabled the profile, the profile is blocked or `next_charge_at` changed, the method returns `created=false` and the external `POST /payments` is not made.
 
-После успешного внешнего POST `AttachRecurringProviderPayment` дозаполняет `provider_payment_charge_id`, а `PaymentPoller` финализирует payment как обычный direct payment. Успех recurring обновляет профиль в `active`, сбрасывает ошибки и ставит новый `next_charge_at`; если во время `charging` профиль был отключён пользователем (`disabled`) или уведён в `blocked`, успешный in-flight payment создаёт subscription, но профиль не реактивируется (`blocked` ждёт ручной проверки).
+After a successful external POST `AttachRecurringProviderPayment` fills in `provider_payment_charge_id`, and `PaymentPoller` finalizes the payment like a regular direct payment. A successful recurring payment sets the profile to `active`, resets errors and sets a new `next_charge_at`; if during `charging` the profile was disabled by the user (`disabled`) or moved to `blocked`, the successful in-flight payment creates a subscription, but the profile is not reactivated (`blocked` waits for a manual check).
 
-При локальной ошибке POST/attach до provider id `MarkRecurringRetry` возвращает профиль из `charging` в `charge_failed` без переноса `next_charge_at`; если процесс упал и профиль остался `charging`, due-select подберёт его только при наличии pending intent без provider id: следующий tick в пределах 23 часов повторит тот же `POST` с тем же `Idempotence-Key`. После 23 часов `StartRecurringPaymentIntent` переводит локальный intent в `failed`, профиль в `blocked`, пишет `recurring_intent_blocked` и больше не ретраит автоматически. При подтверждённом временном `canceled` recurring intent переводит payment в `failed` и профиль в `charge_failed`/`blocked` в одной транзакции; revoked/mandate причины уходят в `blocked`. `DisableRecurring` применим к любому статусу кроме уже `disabled`, очищает `payment_method_id` и возвращает `changed bool`.
+On a local POST/attach error before the provider id, `MarkRecurringRetry` returns the profile from `charging` to `charge_failed` without moving `next_charge_at`; if the process crashed and the profile stayed `charging`, the due-select will pick it up only when there is a pending intent without a provider id: the next tick within 23 hours repeats the same `POST` with the same `Idempotence-Key`. After 23 hours `StartRecurringPaymentIntent` moves the local intent to `failed` and the profile to `blocked`, writes `recurring_intent_blocked` and no longer retries automatically. On a confirmed temporary `canceled`, the recurring intent moves the payment to `failed` and the profile to `charge_failed`/`blocked` in one transaction; revoked/mandate reasons go to `blocked`. `DisableRecurring` is applicable to any status except an already `disabled` one, clears `payment_method_id` and returns `changed bool`.
 
-Legacy `successful_payment` остаётся для старого Telegram Payments пути:
+Legacy `successful_payment` remains for the old Telegram Payments path:
 
-Successful payment идемпотентно пишет `payments` по `telegram_payment_charge_id` и создаёт новую строку `subscriptions` с независимым `expires_at = now()+30 days`. Это **два statement в одной транзакции**: финальный `UPDATE payments` внутри того же CTE не видит строку, вставленную `new_payment`, поэтому `subscription_id` проставляется отдельным statement.
+A successful payment idempotently writes `payments` by `telegram_payment_charge_id` and creates a new `subscriptions` row with an independent `expires_at = now()+30 days`. These are **two statements in one transaction**: the final `UPDATE payments` inside the same CTE does not see the row inserted by `new_payment`, so `subscription_id` is set by a separate statement.
 
-`SELECT telegram_id FROM users WHERE telegram_id = $1 FOR UPDATE` идёт первым statement транзакции пользователя: каждая новая строка подписки независима (`expires_at = now()+30 days`, без chain-чтения `MAX(expires_at)` как базы нового периода), поэтому лок для этой конкретной гонки не обязателен, но оставлен как общая сериализация конкурентных успешных платежей одного юзера в одной транзакции (защита от будущих зависимостей от состояния `users`/подписок в этом же коде). Проверено тестом `TestRecordSuccessfulPayment_ConcurrentSameUser` (billing_test.go) — независимые периоды создаются корректно без гонок. Платежи разных юзеров друг друга не блокируют — лочится конкретная строка `users`, не таблица.
+`SELECT telegram_id FROM users WHERE telegram_id = $1 FOR UPDATE` is the first statement of the user's transaction: each new subscription row is independent (`expires_at = now()+30 days`, no chain-reading of `MAX(expires_at)` as the base of the new period), so the lock is not required for this particular race, but it is kept as a general serialization of concurrent successful payments of one user in one transaction (protection against future dependencies on the state of `users`/subscriptions in the same code). Verified by the test `TestRecordSuccessfulPayment_ConcurrentSameUser` (billing_test.go): independent periods are created correctly without races. Payments of different users do not block each other: a specific `users` row is locked, not the table.
 
 ```sql
 SELECT telegram_id FROM users WHERE telegram_id = $1 FOR UPDATE;
@@ -619,17 +619,17 @@ SELECT (SELECT id FROM new_payment), (SELECT id FROM new_sub);
 UPDATE payments SET subscription_id = $2 WHERE id = $1;  -- $1=new_payment.id, $2=new_sub.id
 ```
 
-Ретрай Telegram с тем же charge id даёт пустой `new_payment`, значит `new_sub` не создаётся и statement 2 пропускается. Конкурентный ретрай того же charge id сериализуется UNIQUE-индексом. Два разных successful_payment одного юзера — две независимые легитимные строки подписки, каждая со своим `expires_at = now()+30 days`; `FOR UPDATE` на строке `users` (выше) остаётся общей защитой транзакции платежа, не завязан на общий срок между строками.
+A Telegram retry with the same charge id yields an empty `new_payment`, so `new_sub` is not created and statement 2 is skipped. A concurrent retry of the same charge id is serialized by the UNIQUE index. Two different successful_payment events of one user are two independent legitimate subscription rows, each with its own `expires_at = now()+30 days`; `FOR UPDATE` on the `users` row (above) remains a general protection of the payment transaction and does not depend on a shared expiry between rows.
 
-### 5.5. Legacy `pre_checkout_query` — только in-memory валидация
+### 5.5. Legacy `pre_checkout_query`: in-memory validation only
 
-Этот раздел относится к старому Telegram Payments пути. В direct payment links Telegram `pre_checkout_query` не используется: подтверждение оплаты идёт через polling ЮKassa (§5.4).
+This section applies to the old Telegram Payments path. In direct payment links Telegram `pre_checkout_query` is not used: payment confirmation goes through YooKassa polling (§5.4).
 
-Telegram даёт **10 секунд** на ответ (жёсткий лимит, после — `Bad Request: query is too old`). Минус сетевой roundtrip → целевое время ответа **≤500 мс**, превышение логируется как WARN, систематические превышения (>1% по rolling-окну) — алерт. Подробности legacy-пути — `docs/api/yookassa/API.md`.
+Telegram gives **10 seconds** to answer (a hard limit, after that `Bad Request: query is too old`). Minus the network roundtrip, the target response time is **<=500 ms**, exceeding it is logged as WARN, systematic overruns (>1% over a rolling window) trigger an alert. Legacy path details: `docs/api/yookassa/API.md`.
 
-Для legacy-пути: никаких походов в БД с JOIN. Валидация — формат `invoice_payload`, существование юзера в in-memory кеше (или один `SELECT` по PK). Проверки «нет активной подписки» здесь НЕТ: при модели 1:1 (§3.3) несколько активных периодов — норма, а повторная оплата создаёт независимый период (`expires_at = now()+30 days`, §5.4) легитимно; дедуп ретрая обеспечивает `UNIQUE(telegram_payment_charge_id)` в `successful_payment`, не pre_checkout. Бизнес-логика создания подписки — только в `successful_payment`.
+For the legacy path: no DB trips with JOINs. Validation is the `invoice_payload` format and the existence of the user in an in-memory cache (or a single `SELECT` by PK). There is NO "no active subscription" check here: under the 1:1 model (§3.3) several active periods are normal, and a repeated payment legitimately creates an independent period (`expires_at = now()+30 days`, §5.4); retry dedup is provided by `UNIQUE(telegram_payment_charge_id)` in `successful_payment`, not by pre_checkout. The business logic of subscription creation lives only in `successful_payment`.
 
-### 5.6. F9-тики и payment nudges
+### 5.6. F9 ticks and payment nudges
 
 ```sql
 SELECT u.telegram_id,
@@ -638,37 +638,37 @@ FROM users u
 JOIN subscriptions s ON s.user_id = u.telegram_id AND s.expires_at > now() AND s.minutes_balance > 0
 LEFT JOIN payments p ON p.user_id = u.telegram_id AND p.status = 'succeeded'
 GROUP BY u.telegram_id, u.notified_sub_expiring_at
--- Модель 1:1: у юзера может быть несколько активных строк с независимыми
--- expires_at — берём MAX(expires_at), ровно один на юзера (GROUP BY снимает дубли).
+-- 1:1 model: a user may have several active rows with independent
+-- expires_at; we take MAX(expires_at), exactly one per user (GROUP BY removes duplicates).
 HAVING MAX(s.expires_at) BETWEEN now() + INTERVAL '3 days' AND now() + INTERVAL '4 days'
    AND (u.notified_sub_expiring_at IS NULL
         OR u.notified_sub_expiring_at < COALESCE(MAX(p.paid_at), '-infinity'::timestamptz));
 ```
 
-`COALESCE(..., '-infinity')` нужен, чтобы `MAX(paid_at)=NULL` не ломал сравнение. При модели 1:1 у юзера может быть несколько активных подписок, поэтому F9 агрегирует по `u.telegram_id` и пушит по `MAX(s.expires_at)`, ровно одну строку на юзера.
+`COALESCE(..., '-infinity')` is needed so that `MAX(paid_at)=NULL` does not break the comparison. Under the 1:1 model a user may have several active subscriptions, so F9 aggregates by `u.telegram_id` and pushes by `MAX(s.expires_at)`, exactly one row per user.
 
-Новые дожимы #12 дедупятся через `analytics_events`:
+The new #12 nudges are deduplicated through `analytics_events`:
 
-- `payment_followup`: последний `subscription_viewed`/`payment_requested` старше 24 часов; нет активной подписки, нет `payments.status='succeeded'` после просмотра, нет `nudge_sent/payment_followup` после просмотра.
-- `sub_low_balance`: активные подписки пользователя дают `SUM(minutes_balance) > 0 AND < 60`; нет `nudge_sent/sub_low_balance` после последнего successful payment. Имеет приоритет над `sub_expiring`, чтобы один тик не слал два подписочных пуша.
-- `trial_ending`: отсеивает любую календарно активную подписку, даже если `minutes_balance = 0`; платящим пользователям нужен подписочный дожим, а не trial-дожим.
-- `sub_empty_balance`: есть календарно активная подписка, но суммарный `minutes_balance = 0`; нет `nudge_sent/sub_empty_balance` после последнего successful payment. Календарно истёкшие строки обрабатывает legacy `sub_expired`.
-- `sub_low_balance` и `sub_empty_balance` не выбирают пользователя, пока есть активная не-trial Job с `reserved_minutes > 0`: `CreateJob` резервирует до 60 минут в начале созвона, и до terminal billing баланс может выглядеть искусственно низким.
+- `payment_followup`: the last `subscription_viewed`/`payment_requested` is older than 24 hours; no active subscription, no `payments.status='succeeded'` after the view, no `nudge_sent/payment_followup` after the view.
+- `sub_low_balance`: the user's active subscriptions give `SUM(minutes_balance) > 0 AND < 60`; no `nudge_sent/sub_low_balance` after the last successful payment. It has priority over `sub_expiring`, so that one tick does not send two subscription pushes.
+- `trial_ending`: filters out any calendar-active subscription, even if `minutes_balance = 0`; paying users need a subscription nudge, not a trial nudge.
+- `sub_empty_balance`: there is a calendar-active subscription, but the total `minutes_balance = 0`; no `nudge_sent/sub_empty_balance` after the last successful payment. Calendar-expired rows are handled by the legacy `sub_expired`.
+- `sub_low_balance` and `sub_empty_balance` do not select a user while there is an active non-trial Job with `reserved_minutes > 0`: `CreateJob` reserves up to 60 minutes at the start of a call, and until terminal billing the balance may look artificially low.
 
-Инвариант для всех классов сохраняется: сначала отправить сообщение, потом поставить mark. Для новых классов mark = `analytics_events(event_type='nudge_sent', event_key=<class>)`; для старых F9-классов `users.notified_*_at` и `nudge_sent` пишутся одной транзакцией.
+The invariant holds for all classes: first send the message, then set the mark. For the new classes the mark = `analytics_events(event_type='nudge_sent', event_key=<class>)`; for the old F9 classes, `users.notified_*_at` and `nudge_sent` are written in one transaction.
 
-### 5.7. Terminal billing в `done` / `failed_summary`
+### 5.7. Terminal billing into `done` / `failed_summary`
 
-Резерв уже сделан при создании Job (§5.1). На terminal `done` или `failed_summary` считаем фактическое списание по duration:
+The reserve was already made at Job creation (§5.1). On terminal `done` or `failed_summary` we compute the actual charge by duration:
 
-- приоритет источников duration: явное значение caller'а, сохранённое `jobs.duration_seconds`, observable окно `recording_started_at -> now()`, fallback 3600s;
-- для Speech2Text caller передаёт `Result.DurationSeconds` только если Job ещё не дошёл до `processing` с сохранённым observable window; если окно сохранено, caller передаёт `0`, чтобы terminal billing взял `jobs.duration_seconds`;
-- `duration_seconds <= 0` после всех источников превращается в fallback 3600s;
-- `1..59` секунд = 1 минута;
-- `>=60` секунд округляется вверх до полной минуты;
-- если wanted меньше резерва, unused возвращается в исходный source;
-- если wanted больше резерва, extra добирается только из исходного source и только при достаточном активном остатке;
-- долг, negative balance и списание следующей подписки не создаются.
+- duration source priority: the caller's explicit value, the saved `jobs.duration_seconds`, the observable window `recording_started_at -> now()`, fallback 3600s;
+- for Speech2Text the caller passes `Result.DurationSeconds` only if the Job has not yet reached `processing` with a saved observable window; if the window is saved, the caller passes `0`, so that terminal billing takes `jobs.duration_seconds`;
+- `duration_seconds <= 0` after all sources turns into the fallback 3600s;
+- `1..59` seconds = 1 minute;
+- `>=60` seconds is rounded up to a full minute;
+- if wanted is less than the reserve, the unused part is returned to the original source;
+- if wanted is greater than the reserve, the extra is collected only from the original source and only with a sufficient active remainder;
+- no debt, negative balance or charge of the next subscription is created.
 
 ```sql
 WITH closed AS (
@@ -689,15 +689,15 @@ WHERE users.telegram_id = closed.user_id
   AND closed.is_trial = true;
 ```
 
-Если terminal UPDATE вернул `RowsAffected=0` (повторный поллинг провайдера) — второй тоже ничего не делает, всё атомарно в одной транзакции. `summary_md` пишется до доставки саммари, чтобы retry доставки не вызывал LLM повторно.
+If the terminal UPDATE returned `RowsAffected=0` (repeated provider polling), the second one also does nothing, all atomic in one transaction. `summary_md` is written before the summary is delivered, so that a delivery retry does not call the LLM again.
 
-Позднее восстановление конспекта из «Мои звонки» не вызывает terminal billing повторно: `SetTerminalJobSummary` работает только с `done|failed_summary`, сохраняет `summary_md`, а для `failed_summary` переводит статус в `done` и очищает `last_error`.
+A later summary restore from the "My calls" panel does not call terminal billing again: `SetTerminalJobSummary` works only with `done|failed_summary`, saves `summary_md`, and for `failed_summary` moves the status to `done` and clears `last_error`.
 
-### 5.8. Parallel calls, active cap и same-URL dedup при создании Job
+### 5.8. Parallel calls, active cap and same-URL dedup at Job creation
 
-`CreateJob` разрешает несколько активных разных `meeting_url`, если хватает квоты и `active < 4`. Денежный ограничитель — атомарный резерв §5.1; cap=4 защищает provider capacity. Проверка cap атомарна: в начале транзакции лочим `users` строку, затем проверяем same-URL duplicate и считаем активные Job. При `active >= 4` reserve ещё не выполнен.
+`CreateJob` allows several active different `meeting_url` values if there is enough quota and `active < 4`. The money limiter is the atomic reserve §5.1; cap=4 protects provider capacity. The cap check is atomic: at the start of the transaction we lock the `users` row, then check for a same-URL duplicate and count active Jobs. With `active >= 4` the reserve has not yet been made.
 
-Same-URL dedup остаётся физическим ограничением БД:
+Same-URL dedup remains a physical DB constraint:
 
 ```sql
 CREATE UNIQUE INDEX jobs_active_dedup_idx
@@ -705,54 +705,54 @@ ON jobs (user_id, meeting_url)
 WHERE status NOT IN ('done','failed_join','failed','failed_summary');
 ```
 
-Тот же URL возвращает `ErrDuplicateActiveJob` до reserve квоты; unique violation на `jobs_active_dedup_idx` мапится туда же и откатывает транзакцию. Разные URL ограничены квотой и cap=4; account-wide provider concurrency остаётся hardening-треком.
+The same URL returns `ErrDuplicateActiveJob` before the quota reserve; a unique violation on `jobs_active_dedup_idx` is mapped to the same error and rolls back the transaction. Different URLs are limited by the quota and cap=4; account-wide provider concurrency remains a hardening track.
 
-### 5.9. Полный refund — деактивация подписки (двухфазный)
+### 5.9. Full refund: subscription deactivation (two-phase)
 
-На MVP частичные refund'ы запрещены — все возвраты полные, refunds:payment строго 1:1 (§3.5, ручной процесс support → ЮKassa API). Возврат **двухфазный**: детерминированный `Idempotence-Key` нужен ДО `POST /v3/refunds`, а `provider_refund_id` приходит только из ответа (`api/yookassa/API.md` §3/§11.3) — одностадийный INSERT с `provider_refund_id` в прямом REST-флоу физически невозможен.
+In the MVP partial refunds are forbidden: all refunds are full, refunds:payment is strictly 1:1 (§3.5, manual process support to YooKassa API). The refund is **two-phase**: a deterministic `Idempotence-Key` is needed BEFORE `POST /v3/refunds`, while `provider_refund_id` comes only from the response (`api/yookassa/API.md` §3/§11.3); a single-stage INSERT with `provider_refund_id` in the direct REST flow is physically impossible.
 
-**Фаза 1 — `BeginRefund` (до вызова ЮKassa):** создаём pending-возврат с нашим детерминированным `idempotence_key`. `refunds_active_idx` (§3.5) физически отсекает второй возврат по тому же платежу.
+**Phase 1, `BeginRefund` (before calling YooKassa):** we create a pending refund with our deterministic `idempotence_key`. `refunds_active_idx` (§3.5) physically rejects a second refund for the same payment.
 
 ```sql
 INSERT INTO refunds (payment_id, idempotence_key, amount, status)
 SELECT id, $2, amount, 'pending'
 FROM payments
 WHERE provider_payment_charge_id = $1 AND status = 'succeeded'
-ON CONFLICT DO NOTHING            -- гасится refunds_active_idx (активный pending/succeeded по платежу) ИЛИ idempotence_key UNIQUE (ретрай того же намерения тем же ключом, в т.ч. когда прошлый возврат уже failed/canceled и выпал из refunds_active_idx); обе ветки -> RowsAffected=0 -> берём существующий SELECT
+ON CONFLICT DO NOTHING            -- suppressed by refunds_active_idx (an active pending/succeeded refund for the payment) OR by idempotence_key UNIQUE (a retry of the same intent with the same key, including when the previous refund is already failed/canceled and dropped out of refunds_active_idx); both branches -> RowsAffected=0 -> take the existing one with a SELECT
 RETURNING id, idempotence_key;
--- RowsAffected=0 → платёж не succeeded ИЛИ уже есть активный возврат: берём существующий отдельным SELECT.
+-- RowsAffected=0: the payment is not succeeded OR an active refund already exists: take the existing one with a separate SELECT.
 ```
 
-Затем `billing.CreateRefund(provider_payment_charge_id, amount, idempotence_key)` → `POST /v3/refunds` (ретрай тем же ключом, `api/yookassa/API.md` §14) → `provider_refund_id` + статус.
+Then `billing.CreateRefund(provider_payment_charge_id, amount, idempotence_key)` -> `POST /v3/refunds` (retry with the same key, `api/yookassa/API.md` §14) -> `provider_refund_id` + status.
 
-**Фаза 2 — `FinalizeRefund` (после ответа ЮKassa), идемпотентна по `refunds.id`:**
+**Phase 2, `FinalizeRefund` (after the YooKassa response), idempotent by `refunds.id`:**
 
 ```sql
 BEGIN;
 
--- 1. Финализируем возврат (provider_refund_id от ЮKassa; idempotence_key уже стоит с фазы 1)
+-- 1. Finalize the refund (provider_refund_id from YooKassa; idempotence_key is already set from phase 1)
 UPDATE refunds
 SET status = $status, provider_refund_id = $provider_refund_id,
     raw_payload = $raw, completed_at = now()
 WHERE id = $refund_id AND status = 'pending'
 RETURNING payment_id;
--- RowsAffected=0 → возврат уже финализирован (повторный webhook/триггер) → выходим без COMMIT.
+-- RowsAffected=0: the refund is already finalized (repeated webhook/trigger), exit without COMMIT.
 
--- 2. Только при УСПЕШНОМ возврате (status='succeeded') помечаем платёж
+-- 2. Only on a SUCCESSFUL refund (status='succeeded') mark the payment
 UPDATE payments
 SET status = 'refunded'
 WHERE id = $payment_id AND status = 'succeeded'
 RETURNING subscription_id, user_id;
 
--- 3. Деактивируем РОВНО ту строку подписки, что купил этот платёж (модель 1:1).
---    Одно поле: expires_at = now() (баланс не трогаем — он нерелевантен при истёкшем сроке,
---    §5.1 фильтрует по expires_at > now; refunded-строка корректно остаётся видимой для F9).
+-- 3. Deactivate EXACTLY the subscription row that this payment bought (1:1 model).
+--    One field: expires_at = now() (the balance is not touched: it is irrelevant with an expired term,
+--    §5.1 filters by expires_at > now; the refunded row correctly stays visible to F9).
 UPDATE subscriptions
 SET expires_at = now()
 WHERE id = $subscription_id AND expires_at > now();
 
--- 4. Отключаем автопродление пользователя после успешного возврата, чтобы refund не
---    оставил будущие merchant-initiated списания активными.
+-- 4. Disable the user's auto-renewal after a successful refund, so that the refund does not
+--    leave future merchant-initiated charges active.
 UPDATE recurring_profiles
 SET status = 'disabled',
     payment_method_id = NULL,
@@ -763,37 +763,37 @@ WHERE user_id = $user_id AND status <> 'disabled';
 COMMIT;
 ```
 
-Гарантия идемпотентности двойная: `refunds_active_idx` (фаза 1) физически не даёт создать второй возврат по платежу; guard `WHERE id=$refund_id AND status='pending'` (фаза 2) отсекает повторную финализацию. `Idempotence-Key` (фаза 1) защищает от двойного списания на стороне ЮKassa при ретрае REST. При `failed`/`canceled` возврате (фаза 2 шаг 1 проставит статус) платёж и подписка НЕ трогаются — деньги не вернулись, доступ сохраняется.
+The idempotency guarantee is double: `refunds_active_idx` (phase 1) physically prevents creating a second refund for the payment; the guard `WHERE id=$refund_id AND status='pending'` (phase 2) rejects repeated finalization. `Idempotence-Key` (phase 1) protects against a double charge on the YooKassa side on a REST retry. On a `failed`/`canceled` refund (phase 2 step 1 sets the status) the payment and subscription are NOT touched: the money was not returned, access is kept.
 
-**Модель 1:1 делает деактивацию детерминированной:** платёж купил ровно одну строку subscription (§5.4), refund деактивирует ровно её; другие оплаченные периоды юзера не затрагиваются (нет rollover-в-одну-строку — закрывает rank 1 ревью). Активные Job'ы юзера не отменяются (поставщик уже подключил бота). Новые Job'ы против этой строки не примутся (`expires_at` в прошлом); если других активных подписок и остатка триала нет → отказ через `billing.go`. **Триал не трогается рефандом** — остаток триала снова даёт доступ, это намеренно (юзер триал не оплачивал).
+**The 1:1 model makes deactivation deterministic:** a payment bought exactly one subscription row (§5.4), a refund deactivates exactly that row; the user's other paid periods are not affected (no rollover into a single row, which closes rank 1 of the review). The user's active Jobs are not canceled (the provider has already connected the bot). New Jobs will not be accepted against this row (`expires_at` is in the past); if there are no other active subscriptions and no trial remainder, the request is rejected via `billing.go`. **A refund does not touch the trial:** the trial remainder grants access again, this is intentional (the user did not pay for the trial).
 
-## 6. Открытые вопросы (для следующих сессий)
+## 6. Open questions (for future sessions)
 
-Решены ревизией 1.2 (2026-06-14, мультиагентное DB-ревью перед payments-слайсом):
-- ~~rollover-vs-refund (продление в одну строку → refund обнуляет оба периода)~~ → **модель «строка на платёж» 1:1** (§3.3/§5.4): каждый платёж = своя строка subscription, refund деактивирует ровно её.
-- ~~Гонка СОЗДАНИЯ первой подписки (FOR UPDATE не лочит несуществующую строку → две подписки с двух карт)~~ → снята моделью 1:1: общей мутируемой строки нет, два платежа = два легитимных периода (§5.4).
-- ~~`payments.subscription_id` отдельным UPDATE → риск FK=NULL → refund не деактивирует~~ → линковка втянута в ту же транзакцию §5.4.
+Resolved by revision 1.2 (2026-06-14, multi-agent DB review before the payments slice):
+- ~~rollover-vs-refund (renewal into one row, a refund zeroes both periods)~~ -> **"row per payment" 1:1 model** (§3.3/§5.4): each payment = its own subscription row, a refund deactivates exactly that one.
+- ~~The race on CREATING the first subscription (FOR UPDATE does not lock a nonexistent row, two subscriptions from two cards)~~ -> removed by the 1:1 model: there is no shared mutable row, two payments = two legitimate periods (§5.4).
+- ~~`payments.subscription_id` as a separate UPDATE, risk of FK=NULL so a refund does not deactivate~~ -> the linking was pulled into the same transaction in §5.4.
 
-Решено в hourly-subscription слайсе (issue #7):
-- ~~Гонка ПРОДЛЕНИЯ (chain): два конкурентных successful_payment ОДНОГО юзера читают один и тот же `MAX(expires_at)` и оба продлевают от одной базы → пользователь теряет оплаченный период~~ → снято вместе с самой chain-моделью: каждая строка теперь получает независимый `expires_at = now()+30 days`, общего состояния для гонки срока новой строки больше нет. `FOR UPDATE` на строке `users` (§5.4) сохранён как общая сериализация транзакции. Подтверждено тестом `TestRecordSuccessfulPayment_ConcurrentSameUser`.
-- ~~Одностадийный refund несовместим с детерминированным `Idempotence-Key`~~ → двухфазный `BeginRefund`/`FinalizeRefund` (§3.5 `idempotence_key`, nullable `provider_refund_id` + partial-unique, §5.9).
-- ~~`meetings_balance <= meetings_limit` CHECK ломался при продлении~~ → при модели 1:1 инвариант снова истинен (баланс ≤ лимита строки), CHECK сохранён.
-- ~~Мёртвые `partially_refunded`/`amount_refunded` против антискоупа~~ → убраны (§3.4).
-- ~~Идемпотентность приёма хрупка к NULL charge_id~~ → CHECK «succeeded ⇒ charge_id NOT NULL» (§3.4).
+Resolved in the hourly-subscription slice (issue #7):
+- ~~The RENEWAL race (chain): two concurrent successful_payment events of ONE user read the same `MAX(expires_at)` and both extend from one base, so the user loses a paid period~~ -> removed together with the chain model itself: each row now gets an independent `expires_at = now()+30 days`, there is no shared state for a race on the new row's expiry. `FOR UPDATE` on the `users` row (§5.4) is kept as a general serialization of the transaction. Confirmed by the test `TestRecordSuccessfulPayment_ConcurrentSameUser`.
+- ~~A single-stage refund is incompatible with a deterministic `Idempotence-Key`~~ -> two-phase `BeginRefund`/`FinalizeRefund` (§3.5 `idempotence_key`, nullable `provider_refund_id` + partial-unique, §5.9).
+- ~~The `meetings_balance <= meetings_limit` CHECK broke on renewal~~ -> under the 1:1 model the invariant is true again (balance <= row limit), the CHECK is kept.
+- ~~Dead `partially_refunded`/`amount_refunded` against the anti-scope~~ -> removed (§3.4).
+- ~~Intake idempotency is fragile to a NULL charge_id~~ -> CHECK "succeeded implies charge_id NOT NULL" (§3.4).
 
-Решены ранее (1.1, 2026-06-04, ревью синьора):
-- ~~F9 NULL в MAX(paid_at)~~ → §5.6 COALESCE с `-infinity`.
-- ~~Parallel calls / same-URL dedup~~ → §5.8.
-- ~~Триал-счётчик «успешно завершённых»~~ → `users.trial_meetings_done` + §5.7.
-- ~~OAuth refresh fail из `summarizing`~~ → новый статус `awaiting_reauth`, не финальный.
+Resolved earlier (1.1, 2026-06-04, senior review):
+- ~~F9 NULL in MAX(paid_at)~~ -> §5.6 COALESCE with `-infinity`.
+- ~~Parallel calls / same-URL dedup~~ -> §5.8.
+- ~~Counter of "successfully completed" trial meetings~~ -> `users.trial_meetings_done` + §5.7.
+- ~~OAuth refresh fail from `summarizing`~~ -> new status `awaiting_reauth`, not final.
 
-Остаются открытыми:
-- **Многоинстансовость — двойной Submit:** `ClaimJobsForWork` для `created`-джоб без backoff-фильтра + claim-bump коммитит до `SetJobSubmitted` (в другой tx после 30с Submit). На ОДНОМ последовательном воркере гонки нет; при 2-м инстансе B повторно склеймит ту же `created`-джобу → второй бот на встрече. **Обязательный пункт ПЕРЕД запуском 2-го инстанса** (не «позже»): клеймить `created` атомарно со сменой статуса (created→joining через RETURNING) либо backoff на created. Не убирать guard-по-статусу на денежных UPDATE даже на одном воркере (стоимость нулевая, отсутствие — мина при масштабировании). **`jobs_active_dedup_idx` этот случай НЕ закрывает:** он дедуплицирует РАЗНЫЕ строки одного юзера по `(user_id, meeting_url)`, а двойной Submit — повторный клейм ОДНОЙ И ТОЙ ЖЕ `created`-строки (тот же `job.id`), второй строки для нарушения UNIQUE нет. Фикс — атомарный клейм, не индекс (комментарий `storage.go` о dedup-индексе как multi-instance-защите вводит в заблуждение).
-- **Контракт `storage.go`:** какие функции экспортируем, как `pgx.Tx` прокидывается между слоями. Решается при детализации модуля — должен быть зафиксирован ДО скаффолда, иначе `billing.go` не сможет делиться транзакцией.
-- ~~**F9-тики вынести из `orchestrator.go` в `notifier.go`**~~ — **Сделано** (слайс payments, `notifier.go`, commit `c3e8779`).
-- **152-ФЗ «право на забвение»** — `ON DELETE RESTRICT` на `payments`/`jobs` означает, что `DELETE FROM users` не сработает. Нужна анонимизация, сохраняя финансовую историю. Две тонкости из DB-ревью 2026-06-14: (1) `users.telegram_id` — натуральный PK и FK во всех таблицах; анонимизация `telegram_id := -id` = UPDATE PK, но `ON UPDATE CASCADE` в схеме нет → упадёт. Выбор ДО публичного запуска: либо `ON UPDATE CASCADE` на FK к users, либо суррогатный `BIGSERIAL` PK + `telegram_id UNIQUE` (каноничнее, но дорогая смена PK — а код уже построен на натуральном telegram_id, поэтому на закрытой бете оставляем натуральный). (2) ПДн (email/phone) лежат и в `payments.raw_payload`/`metadata`, `jobs.raw_provider_response`, `jobs.meeting_url` — анонимизация `telegram_id` их НЕ затронет, нужна чистка/маскировка JSONB. Задача продакшен-доводки — compliance-блокер публичного запуска, на закрытой бете отложено осознанно.
-- **Аудит платежей / event-log** — история переходов payment/refund сейчас только в `raw_payload` (последнее состояние) + эфемерные `slog`. Для денежных споров/сверки за период append-only лог переходов был бы надёжнее. На MVP избыточно (30 юзеров); заложено `provider_paid_at` + `refunds.completed_at` как минимум. Полный `payment_events` — техдолг продакшена.
-- **Orphan-Job recovery после рестарта** — Job в `joining`/`recording`/`processing` при крэше worker'а остаются «висящими». Процедура на старте `main.go`. Задача продакшен-доводки (Этап 3).
-- **Архивация старых `jobs.raw_provider_response JSONB`** — на 30 юзерах × 15 часов × 50 KB условного provider raw за встречу объём пока мал. Через год — процедура удаления старше N дней. Задача после публичного запуска.
-- **Текст согласия 152-ФЗ** для `consent_at` — требуется держать синхронным с сайтом и политикой обработки ПД. Базовый consent gate реализован.
-- ~~**Точное `TRIAL_MEETINGS_LIMIT` и цена**~~ — superseded by #7: продуктовый канон теперь 3 часа trial и 1990 руб/мес за 15 часов; runtime переведён на minute accounting в PR #26.
+Still open:
+- **Multi-instance: double Submit.** `ClaimJobsForWork` for `created` jobs has no backoff filter + the claim-bump commits before `SetJobSubmitted` (in another tx after the 30s Submit). With ONE sequential worker there is no race; with a 2nd instance B re-claims the same `created` job, giving a second bot in the meeting. **A mandatory item BEFORE launching a 2nd instance** (not "later"): claim `created` atomically with a status change (created to joining via RETURNING) or add a backoff on created. Do not remove the status guard on money UPDATEs even on one worker (the cost is zero, its absence is a mine when scaling). **`jobs_active_dedup_idx` does NOT cover this case:** it deduplicates DIFFERENT rows of one user by `(user_id, meeting_url)`, while a double Submit is a repeated claim of the SAME `created` row (the same `job.id`), there is no second row to violate the UNIQUE. The fix is an atomic claim, not an index (the `storage.go` comment about the dedup index as multi-instance protection is misleading).
+- **`storage.go` contract:** which functions we export, how `pgx.Tx` is passed between layers. To be decided when the module is detailed; it must be fixed BEFORE the scaffold, otherwise `billing.go` cannot share a transaction.
+- ~~**Move the F9 ticks from `orchestrator.go` to `notifier.go`**~~ - **Done** (payments slice, `notifier.go`, commit `c3e8779`).
+- **152-FZ "right to be forgotten":** `ON DELETE RESTRICT` on `payments`/`jobs` means `DELETE FROM users` will not work. Anonymization is needed while keeping the financial history. Two subtleties from the DB review of 2026-06-14: (1) `users.telegram_id` is a natural PK and an FK in all tables; anonymization `telegram_id := -id` is an UPDATE of the PK, but the schema has no `ON UPDATE CASCADE`, so it will fail. The choice BEFORE the public launch: either `ON UPDATE CASCADE` on the FKs to users, or a surrogate `BIGSERIAL` PK + `telegram_id UNIQUE` (more canonical, but changing the PK is expensive, and the code is already built on the natural telegram_id, so in the closed beta we keep the natural one). (2) Personal data (email/phone) also lives in `payments.raw_payload`/`metadata`, `jobs.raw_provider_response`, `jobs.meeting_url`: anonymizing `telegram_id` will NOT touch it, JSONB cleanup/masking is needed. A production hardening task, a compliance blocker for the public launch, deliberately deferred in the closed beta.
+- **Payment audit / event log:** the history of payment/refund transitions is currently only in `raw_payload` (the last state) + ephemeral `slog`. For money disputes/reconciliation over a period an append-only transition log would be more reliable. Excessive for the MVP (30 users); `provider_paid_at` + `refunds.completed_at` are in place as a minimum. A full `payment_events` is production tech debt.
+- **Orphan-Job recovery after restart:** a Job in `joining`/`recording`/`processing` stays "hanging" when the worker crashes. A procedure at `main.go` startup. A production hardening task (Stage 3).
+- **Archiving old `jobs.raw_provider_response JSONB`:** with 30 users x 15 hours x 50 KB of notional provider raw per meeting the volume is still small. In a year, a procedure to delete data older than N days. A task after the public launch.
+- **152-FZ consent text** for `consent_at` must be kept in sync with the website and the personal data processing policy. The basic consent gate is implemented.
+- ~~**Exact `TRIAL_MEETINGS_LIMIT` and price**~~ - superseded by #7: the product canon is now a 3-hour trial and 1990 RUB/month for 15 hours; the runtime was moved to minute accounting in PR #26.

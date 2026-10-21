@@ -1,8 +1,8 @@
 name: Deploy
 
-# Автотриггер снят 28.08.2026: GitHub Actions не используются, выкат идёт
-# вручную через скрипт выката через Coolify API. Вернуть
-# push в dev вместе с self-hosted раннером.
+# The auto trigger was removed on 2026-08-28: GitHub Actions is not used, the rollout is done
+# manually through a rollout script via the Coolify API. Restore the
+# push to dev trigger together with a self-hosted runner.
 on:
   workflow_dispatch:
     inputs:
@@ -17,8 +17,8 @@ on:
 permissions:
   contents: read
 
-# Dev и prod живут в одном workflow, поэтому группа разведена по target: иначе
-# push в dev отменил бы идущий прод-раскат между сменой APP_IMAGE и деплоем.
+# Dev and prod live in one workflow, so the group is split by target: otherwise
+# a push to dev would cancel a running prod rollout between the APP_IMAGE change and the deploy.
 concurrency:
   group: transcrib-${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'prod') && 'prod' || format('dev-{0}', github.ref) }}
   cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.target == 'prod') }}
@@ -32,8 +32,8 @@ env:
 jobs:
   checks:
     name: Go checks
-    # Общая джоба dev- и prod-пути: на self-hosted уходит только dev, прод
-    # остаётся на GitHub-hosted вместе с остальными prod-джобами.
+    # Shared job of the dev and prod paths: only dev goes to self-hosted, prod
+    # stays on GitHub-hosted together with the other prod jobs.
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'prod') && 'ubuntu-latest' || (vars.CI_RUNNER || 'ubuntu-latest') }}
     timeout-minutes: 20
     services:
@@ -43,7 +43,7 @@ jobs:
           POSTGRES_DB: transcrib
           POSTGRES_USER: transcrib
           POSTGRES_PASSWORD: transcrib
-        # Случайный порт хоста: на self-hosted два раннера иначе дерутся за 5432.
+        # Random host port: on self-hosted two runners would otherwise fight over 5432.
         ports:
           - 5432/tcp
         options: >-
@@ -66,7 +66,7 @@ jobs:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
-      # Контекст job недоступен в jobs.<id>.env, поэтому порт разрешается здесь.
+      # The job context is unavailable in jobs.<id>.env, so the port is resolved here.
       - name: Export DATABASE_URL
         run: echo "DATABASE_URL=postgres://transcrib:transcrib@localhost:${{ job.services.postgres.ports[5432] }}/transcrib?sslmode=disable" >> "$GITHUB_ENV"
 
@@ -147,7 +147,7 @@ jobs:
             --header "Content-Type: application/json" \
             --data "{\"key\":\"APP_IMAGE\",\"value\":\"${image}\"}" \
             --output /dev/null
-          # POST, а не GET: с Coolify 4.2.0 изменяющие ручки отвечают на GET 405.
+          # POST, not GET: since Coolify 4.2.0 the mutating endpoints answer GET with 405.
           curl --fail --silent --show-error --request POST "$COOLIFY_WEBHOOK" \
             --header "Authorization: Bearer $COOLIFY_TOKEN"
 
@@ -237,6 +237,6 @@ jobs:
             --header "Content-Type: application/json" \
             --data "{\"key\":\"APP_IMAGE\",\"value\":\"${image}\"}" \
             --output /dev/null
-          # POST, а не GET: с Coolify 4.2.0 изменяющие ручки отвечают на GET 405.
+          # POST, not GET: since Coolify 4.2.0 the mutating endpoints answer GET with 405.
           curl --fail --silent --show-error --request POST "$COOLIFY_WEBHOOK" \
             --header "Authorization: Bearer $COOLIFY_TOKEN"

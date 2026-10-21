@@ -1,7 +1,7 @@
 -- +goose Up
--- failed_summary — четвёртый финальный статус (architecture.md §7, db.md §3.6):
--- саммари F3 — отдельный шаг, падает независимо от транскрипта; транскрипт к этому
--- моменту уже доставлен. CHECK в Postgres не меняется на месте — пересоздаём.
+-- failed_summary is the fourth final status (architecture.md §7, db.md §3.6):
+-- the F3 summary is a separate step, it fails independently of the transcript; the transcript by this
+-- moment is already delivered. A CHECK in Postgres cannot be changed in place - we recreate it.
 ALTER TABLE jobs DROP CONSTRAINT jobs_status_check;
 ALTER TABLE jobs ADD CONSTRAINT jobs_status_check CHECK (status IN (
     'created','joining','recording','processing',
@@ -9,7 +9,7 @@ ALTER TABLE jobs ADD CONSTRAINT jobs_status_check CHECK (status IN (
     'done','failed_join','failed','failed_summary'
 ));
 
--- failed_summary финальный — исключаем из выборки воркера, иначе claim тянул бы его вечно.
+-- failed_summary is final - exclude it from the worker selection, otherwise claim would pull it forever.
 DROP INDEX jobs_worker_idx;
 CREATE INDEX jobs_worker_idx
     ON jobs (status, updated_at)

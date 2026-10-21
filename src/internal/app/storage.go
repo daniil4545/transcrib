@@ -16,17 +16,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Сентинелы CreateJob: tg.go различает их через errors.Is и шлёт юзеру разные тексты.
+// CreateJob sentinels: tg.go tells them apart via errors.Is and sends the user different texts.
 var (
 	ErrNoQuota            = errors.New("storage: no trial or subscription quota")
 	ErrDuplicateActiveJob = errors.New("storage: active job with same meeting url exists")
 	ErrTooManyActiveJobs  = errors.New("storage: too many active jobs")
-	// ErrJobNotCancelable — джоба не принадлежит юзеру либо уже не активна.
+	// ErrJobNotCancelable - the job does not belong to the user or is no longer active.
 	ErrJobNotCancelable = errors.New("storage: job not cancelable")
-	// ErrJobNotFound — джобы с таким id у этого юзера нет (ownership-проверка панели).
+	// ErrJobNotFound - no job with this id for this user (panel ownership check).
 	ErrJobNotFound = errors.New("storage: job not found for user")
-	// ErrJobNotCreated — SetJobSubmitted не нашёл джобу в статусе created (отменена
-	// юзером, пока шёл Submit) — submitJob останавливает осиротевшего бота.
+	// ErrJobNotCreated - SetJobSubmitted did not find the job in status created (cancelled
+	// by the user while Submit was in flight) - submitJob stops the orphaned bot.
 	ErrJobNotCreated = errors.New("storage: job no longer in created state")
 )
 
@@ -61,25 +61,25 @@ func billedMinutes(durationSeconds int) int {
 	}
 }
 
-// ErrPaymentNotRefundable — платёж не найден / не в статусе succeeded и при этом
-// нет уже существующего активного возврата по нему. billing.go различает через errors.Is.
+// ErrPaymentNotRefundable - the payment is not found / not in status succeeded and there
+// is no existing active refund for it. billing.go tells it apart via errors.Is.
 var ErrPaymentNotRefundable = errors.New("storage: payment not found or not refundable")
 
-// Balance — проекция остатка квоты для /balance и пушей F9. Локальный тип
-// storage.go: это не сущность БД (нет таблицы), в domain.go ему не место.
-// Для подписки агрегирует активные строки (модель 1:1); для триала — остаток лимита.
+// Balance - projection of the remaining quota for /balance and F9 pushes. A local type of
+// storage.go: it is not a DB entity (no table), so it does not belong in domain.go.
+// For a subscription it aggregates active rows (1:1 model); for a trial - the remaining limit.
 type Balance struct {
 	IsSubscription bool
 	Remaining      int
 	Limit          int
-	ExpiresAt      *time.Time // только для подписки; nil для триала
+	ExpiresAt      *time.Time // subscription only; nil for a trial
 }
 
-// PaymentInput — слепок платежа для RecordSuccessfulPayment и payment links (§5.4).
-// Локальный тип storage.go: собирается billing.go из tele.Payment + наших полей,
-// не сущность БД (для неё есть domain.Payment). RawPayload/Metadata — JSONB-колонки,
-// nil-значения ложатся как SQL NULL (валидно для jsonb). ProviderPaidAt nil, пока
-// telebot не отдаёт время ЮKassa из successful_payment.
+// PaymentInput - payment snapshot for RecordSuccessfulPayment and payment links (§5.4).
+// A local type of storage.go: billing.go builds it from tele.Payment + our own fields;
+// not a DB entity (domain.Payment is that). RawPayload/Metadata are JSONB columns,
+// nil values are stored as SQL NULL (valid for jsonb). ProviderPaidAt is nil while
+// telebot does not expose the YooKassa time from successful_payment.
 type PaymentInput struct {
 	UserID           int64
 	AmountKopecks    int64
@@ -94,7 +94,7 @@ type PaymentInput struct {
 	PaymentMethodID  string
 }
 
-// Storage — доступ к Postgres. Не содержит бизнес-правил (architecture.md §4).
+// Storage - Postgres access. Contains no business rules (architecture.md §4).
 type Storage struct {
 	pool *pgxpool.Pool
 }
@@ -130,14 +130,14 @@ func safeAnalyticsMetadata(eventType string, metadata map[string]string) map[str
 	return map[string]string{}
 }
 
-// GetOrCreateUser регистрирует пользователя по telegram_id при первом контакте
-// и возвращает его текущее состояние. Идемпотентно: для существующего юзера
-// INSERT не пишет строку (ON CONFLICT DO NOTHING), поэтому горячий путь
-// middleware не плодит мёртвые версии строк.
+// GetOrCreateUser registers a user by telegram_id on first contact
+// and returns its current state. Idempotent: for an existing user
+// INSERT writes no row (ON CONFLICT DO NOTHING), so the middleware hot path
+// does not produce dead row versions.
 //
-// Возвращает User только с identity+consent (telegram_id, consent_at, created_at);
-// trial-счётчики и notified_* в нём НУЛЕВЫЕ, не читаются этим SELECT. Их актуальные
-// значения берут точечно: квоту — Balance, резерв — CreateJob под транзакцией.
+// Returns a User with identity+consent only (telegram_id, consent_at, created_at);
+// trial counters and notified_* are ZERO in it, this SELECT does not read them. Their current
+// values are fetched on demand: quota via Balance, reservation via CreateJob under a transaction.
 func (s *Storage) GetOrCreateUser(ctx context.Context, telegramID int64) (User, error) {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO users (telegram_id) VALUES ($1) ON CONFLICT (telegram_id) DO NOTHING`,
@@ -146,7 +146,7 @@ func (s *Storage) GetOrCreateUser(ctx context.Context, telegramID int64) (User, 
 		return User{}, fmt.Errorf("insert user %d: %w", telegramID, err)
 	}
 
-	// После upsert строка существует всегда (вставлена или уже была) — SELECT её находит.
+	// After the upsert the row always exists (inserted or already there) - the SELECT finds it.
 	var u User
 	err = s.pool.QueryRow(ctx,
 		`SELECT telegram_id, consent_at, created_at FROM users WHERE telegram_id = $1`,
@@ -187,24 +187,24 @@ func (s *Storage) PaymentEmail(ctx context.Context, userID int64) (string, error
 	return *email, nil
 }
 
-// CreateJob создаёт заявку на обработку встречи с резервом квоты (db.md §5.1),
-// всё в одной транзакции. Порядок: подписка, затем триал, затем insert Job.
-// trialLimitMinutes — лимит триала в минутах.
-// (storage без бизнес-правил: лимит приходит параметром, не хардкодом).
+// CreateJob creates a meeting processing job with a quota reservation (db.md §5.1),
+// all in one transaction. Order: subscription, then trial, then insert Job.
+// trialLimitMinutes - trial limit in minutes
+// (storage has no business rules: the limit arrives as a parameter, not hardcoded).
 //
-// Атомарный UPDATE ... WHERE физически закрывает гонку «два сообщения за 200мс»:
-// два параллельных резерва не могут оба пройти WHERE minutes_balance > 0 /
-// trial_minutes_used < limit на одной строке.
+// An atomic UPDATE ... WHERE physically closes the "two messages within 200ms" race:
+// two parallel reservations cannot both pass WHERE minutes_balance > 0 /
+// trial_minutes_used < limit on the same row.
 //
-// Сентинелы: ErrDuplicateActiveJob (тот же URL уже активен), ErrTooManyActiveJobs
-// (достигнут cap активных Job), ErrNoQuota (нет квоты).
+// Sentinels: ErrDuplicateActiveJob (the same URL is already active), ErrTooManyActiveJobs
+// (the active Job cap is reached), ErrNoQuota (no quota).
 func (s *Storage) CreateJob(ctx context.Context, userID int64, meetingURL, provider string, trialLimitMinutes int) (Job, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Job{}, fmt.Errorf("create job begin tx for user %d: %w", userID, err)
 	}
-	// Rollback идемпотентен после Commit (pgx возвращает ErrTxClosed, который мы
-	// игнорируем тут): на успешном пути Commit уже закрыл tx, defer — no-op.
+	// Rollback is idempotent after Commit (pgx returns ErrTxClosed, which we
+	// ignore here): on the success path Commit has already closed the tx, the defer is a no-op.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var lockedUser int64
@@ -246,8 +246,8 @@ func (s *Storage) CreateJob(ctx context.Context, userID int64, meetingURL, provi
 		return Job{}, ErrTooManyActiveJobs
 	}
 
-	// Резерв §5.1: сначала подписка (платная квота расходуется раньше триала).
-	// FOR UPDATE на выбранной строке сериализует параллельные списания одной подписки.
+	// Reservation §5.1: subscription first (paid quota is spent before the trial).
+	// FOR UPDATE on the selected row serializes parallel charges against one subscription.
 	var (
 		subID           int64
 		reservedMinutes int
@@ -279,10 +279,10 @@ func (s *Storage) CreateJob(ctx context.Context, userID int64, meetingURL, provi
 	).Scan(&subID, &reservedMinutes)
 	switch {
 	case err == nil:
-		// списали с подписки
+		// charged to the subscription
 	case errors.Is(err, pgx.ErrNoRows):
-		// Активной подписки нет — пробуем триал. ErrNoRows на UPDATE...RETURNING
-		// здесь легитимный «не списалось», не сбой.
+		// No active subscription - try the trial. ErrNoRows on UPDATE...RETURNING
+		// here is a legitimate "nothing charged", not a failure.
 		err = tx.QueryRow(ctx,
 			`WITH reserved AS (
 			     SELECT LEAST(60, $2 - trial_minutes_used) AS minutes
@@ -305,7 +305,7 @@ func (s *Storage) CreateJob(ctx context.Context, userID int64, meetingURL, provi
 		case err == nil:
 			isTrial = true
 		case errors.Is(err, pgx.ErrNoRows):
-			// Ни подписки, ни остатка триала.
+			// Neither a subscription nor a remaining trial balance.
 			return Job{}, ErrNoQuota
 		default:
 			return Job{}, fmt.Errorf("create job reserve trial for user %d: %w", userID, err)
@@ -314,14 +314,14 @@ func (s *Storage) CreateJob(ctx context.Context, userID int64, meetingURL, provi
 		return Job{}, fmt.Errorf("create job reserve subscription for user %d: %w", userID, err)
 	}
 
-	// subscription_id: указатель, чтобы лечь в БД как NULL для триала.
+	// subscription_id: a pointer so it is stored as NULL for a trial.
 	var subArg *int64
 	if !isTrial {
 		subArg = &subID
 	}
 
-	// Порядок Scan строго синхронен RETURNING: рассинхрон дал бы in-memory Job,
-	// расходящийся с БД (напр. is_trial=false при реально true).
+	// Scan order is strictly in sync with RETURNING: a mismatch would give an in-memory Job
+	// diverging from the DB (e.g. is_trial=false when it is actually true).
 	var j Job
 	err = tx.QueryRow(ctx,
 		`INSERT INTO jobs (user_id, meeting_url, status, is_trial, subscription_id, provider, reserved_minutes)
@@ -343,27 +343,27 @@ func (s *Storage) CreateJob(ctx context.Context, userID int64, meetingURL, provi
 	return j, nil
 }
 
-// ClaimJobsForWork атомарно забирает джобы для обработки:
-//   - все в статусе created (ещё не отправлены поставщику)
-//   - joining|recording|processing|summarizing, у которых updated_at не обновлялся
-//     дольше pollInterval (бот подключается/пишет / фоновая обработка / саммари: бэкофф
-//     через bump updated_at в этом же UPDATE, иначе джоба поллилась бы каждым тиком —
-//     ветка Pending не трогает статус)
+// ClaimJobsForWork atomically takes jobs for processing:
+//   - all in status created (not yet sent to the provider)
+//   - joining|recording|processing|summarizing whose updated_at has not been touched
+//     for longer than pollInterval (bot joining/recording / background processing / summary: backoff
+//     via bumping updated_at in the same UPDATE, otherwise the job would be polled on every tick -
+//     the Pending branch does not touch the status)
 //
-// FOR UPDATE SKIP LOCKED защищает от двойного захвата только в пределах statement'а:
-// после COMMIT created-джоба снова claimable (статус меняет лишь SetJobSubmitted).
-// Сериализацию гарантирует единственный последовательный воркер; несколько
-// инстансов требуют отдельного atomic-claim слайса.
-// jobs_worker_idx (status, updated_at) делает вложенный SELECT index scan, не seq scan.
+// FOR UPDATE SKIP LOCKED protects against a double claim only within one statement:
+// after COMMIT a created job is claimable again (only SetJobSubmitted changes the status).
+// Serialization is guaranteed by the single sequential worker; several
+// instances need a separate atomic-claim slice.
+// jobs_worker_idx (status, updated_at) makes the nested SELECT an index scan, not a seq scan.
 func (s *Storage) ClaimJobsForWork(ctx context.Context, pollInterval time.Duration, limit int) ([]Job, error) {
-	// Интервал передаём строкой вида "30000 milliseconds" — стандартный PostgreSQL
-	// interval literal: без расширений pgx, читается в explain, не теряет
-	// суб-секундную точность короткого dev-тика.
+	// The interval is passed as a string like "30000 milliseconds" - a standard PostgreSQL
+	// interval literal: no pgx extensions, readable in explain, does not lose the
+	// sub-second precision of a short dev tick.
 	interval := fmt.Sprintf("%d milliseconds", pollInterval.Milliseconds())
 
-	// $1 = JobCreated (без бэкоффа), $2 = слайс статусов с бэкоффом (ANY),
-	// $3 = interval, $4 = limit. pgx кодирует []string как text[]; каст не нужен
-	// (колонка status TEXT).
+	// $1 = JobCreated (no backoff), $2 = slice of statuses with backoff (ANY),
+	// $3 = interval, $4 = limit. pgx encodes []string as text[]; no cast needed
+	// (status column is TEXT).
 	rows, err := s.pool.Query(ctx,
 		`UPDATE jobs SET updated_at = now()
 		 WHERE id IN (
@@ -399,15 +399,15 @@ func (s *Storage) ClaimJobsForWork(ctx context.Context, pollInterval time.Durati
 	return jobs, nil
 }
 
-// SetJobSubmitted переводит джобу из created в joining после успешного Submit к
-// поставщику (бот отправлен, подключается). externalJobID сохраняется для
-// последующего Poll/Fetch.
+// SetJobSubmitted moves the job from created to joining after a successful Submit to
+// the provider (bot sent, joining). externalJobID is saved for the
+// later Poll/Fetch.
 //
-// Guard WHERE status='created' закрывает гонку с CancelJob: юзер мог отменить
-// (created→failed), пока шёл сетевой Submit. Без guard последующий UPDATE воскресил бы
-// отменённую джобу (failed→joining) с уже возвращённой квотой и запущенным ботом.
-// RowsAffected=0 → ErrJobNotCreated: вызывающий (submitJob) останавливает осиротевшего
-// бота у поставщика.
+// The WHERE status='created' guard closes the race with CancelJob: the user could cancel
+// (created->failed) while the network Submit was in flight. Without the guard the following UPDATE would revive
+// the cancelled job (failed->joining) with the quota already refunded and the bot running.
+// RowsAffected=0 -> ErrJobNotCreated: the caller (submitJob) stops the orphaned
+// bot at the provider.
 func (s *Storage) SetJobSubmitted(ctx context.Context, jobID int64, externalJobID string) error {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE jobs SET status = $2, external_job_id = $3, updated_at = now()
@@ -423,11 +423,11 @@ func (s *Storage) SetJobSubmitted(ctx context.Context, jobID int64, externalJobI
 	return nil
 }
 
-// SetJobRecording переводит джобу joining→recording (бот зашёл на встречу, идёт
-// запись). Питается провайдер-статусом OnCall. moved=RowsAffected>0 сообщает
-// вызывающему (pollJob), что фаза реально сменилась — статус-сообщение редактируется
-// ровно раз на переход. Guard WHERE status='joining': повторный тик (уже recording)
-// даёт moved=false и не повторяет Edit.
+// SetJobRecording moves the job joining->recording (the bot joined the meeting, recording
+// is in progress). Fed by the provider status OnCall. moved=RowsAffected>0 tells
+// the caller (pollJob) that the phase really changed - the status message is edited
+// exactly once per transition. Guard WHERE status='joining': a repeated tick (already recording)
+// gives moved=false and does not repeat the Edit.
 func (s *Storage) SetJobRecording(ctx context.Context, jobID int64) (moved bool, err error) {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE jobs
@@ -443,13 +443,13 @@ func (s *Storage) SetJobRecording(ctx context.Context, jobID int64) (moved bool,
 	return tag.RowsAffected() > 0, nil
 }
 
-// SetJobProcessing переводит джобу в processing (бот вышел, идёт фоновая расшифровка).
-// Питается провайдер-статусом Transcribing (mymeet). moved=RowsAffected>0 для
-// разового Edit.
+// SetJobProcessing moves the job to processing (the bot left, background transcription is running).
+// Fed by the provider status Transcribing (mymeet). moved=RowsAffected>0 for
+// a one-time Edit.
 //
-// Guard WHERE status IN ('joining','recording'): обычный вход — из recording, но
-// поллинг дискретен и может перескочить recording (тик увидел joining, следующий уже
-// processing), поэтому joining в guard. Повторный тик (уже processing) → moved=false.
+// Guard WHERE status IN ('joining','recording'): the usual entry is from recording, but
+// polling is discrete and may skip recording (a tick saw joining, the next one already saw
+// processing), hence joining in the guard. A repeated tick (already processing) -> moved=false.
 func (s *Storage) SetJobProcessing(ctx context.Context, jobID int64) (moved bool, err error) {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE jobs
@@ -477,10 +477,10 @@ func (s *Storage) SetJobProcessing(ctx context.Context, jobID int64) (moved bool
 	return tag.RowsAffected() > 0, nil
 }
 
-// MarkJobManualStop помечает recording-джобу как остановленную пользователем.
-// Сам stop у provider'а вызывается снаружи: storage только атомарно проверяет owner/status
-// и сохраняет marker, по которому orchestrator отличит ожидаемый s2t cancelled от
-// настоящего provider failure. created/joining отменяются старым CancelJob с refund.
+// MarkJobManualStop marks a recording job as stopped by the user.
+// The stop at the provider is called outside: storage only atomically checks owner/status
+// and saves a marker by which the orchestrator tells an expected s2t cancelled from a
+// real provider failure. created/joining are cancelled by the old CancelJob with refund.
 func (s *Storage) MarkJobManualStop(ctx context.Context, userID, jobID int64) (extID string, provider string, err error) {
 	err = s.pool.QueryRow(ctx,
 		`UPDATE jobs
@@ -498,9 +498,9 @@ func (s *Storage) MarkJobManualStop(ctx context.Context, userID, jobID int64) (e
 	return extID, provider, nil
 }
 
-// MarkJobWatchdogStop помечает recording-джобу, которую watchdog останавливает по
-// max age. Marker сохраняется до provider.Cancel: если s2t после /stop вернёт
-// cancelled, worker всё равно имеет право попробовать Fetch.
+// MarkJobWatchdogStop marks a recording job that the watchdog stops by
+// max age. The marker is saved before provider.Cancel: if s2t returns
+// cancelled after /stop, the worker still has the right to try Fetch.
 func (s *Storage) MarkJobWatchdogStop(ctx context.Context, jobID int64) (marked bool, err error) {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE jobs
@@ -514,9 +514,9 @@ func (s *Storage) MarkJobWatchdogStop(ctx context.Context, jobID int64) (marked 
 	return tag.RowsAffected() > 0, nil
 }
 
-// SetJobStatusMessage запоминает id Telegram-сообщения «статус звонка», чтобы
-// оркестратор редактировал его по ходу обработки (а не слал новые). Вызывается из
-// onText сразу после отправки первого статус-сообщения.
+// SetJobStatusMessage stores the id of the Telegram "call status" message so that
+// the orchestrator edits it during processing (instead of sending new ones). Called from
+// onText right after the first status message is sent.
 func (s *Storage) SetJobStatusMessage(ctx context.Context, jobID, statusMessageID int64) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE jobs SET status_message_id = $2 WHERE id = $1`,
@@ -528,14 +528,14 @@ func (s *Storage) SetJobStatusMessage(ctx context.Context, jobID, statusMessageI
 	return nil
 }
 
-// SetJobDone переводит джобу в done, сохраняет сырой JSON-ответ поставщика и
-// финализирует списание минут по фактической duration.
+// SetJobDone moves the job to done, saves the raw JSON response of the provider and
+// finalizes the minute charge by the actual duration.
 func (s *Storage) SetJobDone(ctx context.Context, jobID int64, raw []byte, durationSeconds int, trialLimitMinutes int) error {
 	return s.finishJob(ctx, jobID, JobDone, raw, durationSeconds, "", trialLimitMinutes)
 }
 
-// SetJobSummarizing переводит джобу в summarizing и сохраняет сырой JSON-ответ
-// поставщика (транскрипт) вместе с фактической duration, если provider её отдал.
+// SetJobSummarizing moves the job to summarizing and saves the raw JSON response
+// of the provider (transcript) together with the actual duration, if the provider returned it.
 func (s *Storage) SetJobSummarizing(ctx context.Context, jobID int64, raw []byte, durationSeconds int) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE jobs
@@ -552,9 +552,9 @@ func (s *Storage) SetJobSummarizing(ctx context.Context, jobID int64, raw []byte
 	return nil
 }
 
-// SetJobSummary кэширует конспект ДО доставки, чтобы транзиентный сбой Deliver не
-// повлёк повторный платный Summarize на ретрае. Для provider-native summary вызывается
-// до SetJobDone, поэтому guard допускает активные фазы до terminal done.
+// SetJobSummary caches the summary BEFORE delivery, so that a transient Deliver failure does not
+// cause a repeated paid Summarize on retry. For a provider-native summary it is called
+// before SetJobDone, so the guard allows active phases up to terminal done.
 func (s *Storage) SetJobSummary(ctx context.Context, jobID int64, summary string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE jobs SET summary_md = $2, updated_at = now()
@@ -567,8 +567,8 @@ func (s *Storage) SetJobSummary(ctx context.Context, jobID int64, summary string
 	return nil
 }
 
-// SetTerminalJobSummary сохраняет поздно восстановленный конспект для уже финальной
-// job. Для failed_summary переводит статус в done без повторного биллинга.
+// SetTerminalJobSummary saves a late-recovered summary for an already final
+// job. For failed_summary it moves the status to done without repeated billing.
 func (s *Storage) SetTerminalJobSummary(ctx context.Context, jobID int64, summary string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE jobs
@@ -585,9 +585,9 @@ func (s *Storage) SetTerminalJobSummary(ctx context.Context, jobID int64, summar
 	return nil
 }
 
-// SetJobFailedSummary переводит джобу в failed_summary и фиксирует причину.
-// Используется когда транскрипт уже доставлен, но генерация саммари не удалась.
-// Транскрипт уже у пользователя, поэтому списание финализируется как billable Job.
+// SetJobFailedSummary moves the job to failed_summary and records the reason.
+// Used when the transcript has already been delivered but summary generation failed.
+// The transcript is already with the user, so the charge is finalized as a billable Job.
 func (s *Storage) SetJobFailedSummary(ctx context.Context, jobID int64, reason string, trialLimitMinutes int) error {
 	return s.finishJob(ctx, jobID, JobFailedSummary, nil, 0, reason, trialLimitMinutes)
 }
@@ -758,15 +758,15 @@ func (s *Storage) finishJob(ctx context.Context, jobID int64, finalStatus JobSta
 	return nil
 }
 
-// CancelJob — ранняя отмена джобы юзером из панели «Мои звонки». Фейлит только
-// created/joining джобу ЭТОГО юзера с рефандом резерва квоты (§5.2), в одной
-// транзакции. recording останавливается через MarkJobManualStop и ждёт transcript.
-// Возвращает external_job_id (nil для created — бот ещё не отправлен), provider-создатель
-// для best-effort остановки бота у нужного поставщика, и refunded.
+// CancelJob - early cancellation of a job by the user from the "My calls" panel. Fails only a
+// created/joining job of THIS user with a refund of the quota reservation (§5.2), in one
+// transaction. recording is stopped via MarkJobManualStop and waits for the transcript.
+// Returns external_job_id (nil for created - the bot is not sent yet), the creating provider
+// for a best-effort bot stop at the right provider, and refunded.
 //
-// Ownership+status guard в одном UPDATE: чужую или уже неактивную джобу не трогает →
-// ErrJobNotCancelable. Идемпотентна: повторная отмена тоже вернёт ErrJobNotCancelable
-// (резерв вернётся ровно один раз). is_trial решает направление рефанда, как в §5.2.
+// Ownership+status guard in one UPDATE: another user's or an already inactive job is not touched ->
+// ErrJobNotCancelable. Idempotent: a repeated cancel also returns ErrJobNotCancelable
+// (the reservation is returned exactly once). is_trial decides the refund direction, as in §5.2.
 func (s *Storage) CancelJob(ctx context.Context, userID, jobID int64) (extID *string, provider string, refunded bool, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -802,9 +802,9 @@ func (s *Storage) CancelJob(ctx context.Context, userID, jobID int64) (extID *st
 			 WHERE telegram_id = $1`,
 			userID, reservedMinutes)
 	} else {
-		// CHECK (is_trial XOR subscription_id) гарантирует subID!=nil у не-триала, но
-		// storage-метод не полагается на схему: WHERE id=NULL молча вернул бы 0 строк
-		// и потерял квоту. Денежный путь не теряет возврат молча.
+		// CHECK (is_trial XOR subscription_id) guarantees subID!=nil for a non-trial,
+		// but the storage method does not rely on the schema: WHERE id=NULL would silently return 0 rows
+		// and lose the quota. The money path does not lose a refund silently.
 		if subID == nil {
 			return nil, "", false, fmt.Errorf("cancel job %d: non-trial job has nil subscription_id", jobID)
 		}
@@ -825,9 +825,9 @@ func (s *Storage) CancelJob(ctx context.Context, userID, jobID int64) (extID *st
 	return ext, prov, true, nil
 }
 
-// ListUserJobs возвращает джобы юзера, созданные после since, новые первыми —
-// история звонков для панели. limit/offset — пагинация (панель листает по 5).
-// Чтобы узнать, есть ли следующая страница, вызывающий запрашивает limit+1.
+// ListUserJobs returns the user's jobs created after since, newest first -
+// the call history for the panel. limit/offset - pagination (the panel pages by 5).
+// To know whether there is a next page, the caller requests limit+1.
 func (s *Storage) ListUserJobs(ctx context.Context, userID int64, since time.Time, limit, offset int) ([]Job, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, user_id, meeting_url, status, external_job_id, provider, created_at
@@ -856,8 +856,8 @@ func (s *Storage) ListUserJobs(ctx context.Context, userID int64, since time.Tim
 	return jobs, nil
 }
 
-// UserJob возвращает джобу юзера по id с ownership-проверкой (панель: повторная
-// доставка). ErrJobNotFound, если джобы нет или она принадлежит другому юзеру.
+// UserJob returns a user's job by id with an ownership check (panel: repeated
+// delivery). ErrJobNotFound if the job does not exist or belongs to another user.
 func (s *Storage) UserJob(ctx context.Context, userID, jobID int64) (Job, error) {
 	var j Job
 	err := s.pool.QueryRow(ctx,
@@ -874,19 +874,19 @@ func (s *Storage) UserJob(ctx context.Context, userID, jobID int64) (Job, error)
 	return j, nil
 }
 
-// FailJobWithQuotaRefund переводит джобу в failed и откатывает резерв квоты (§5.2),
-// всё в одной транзакции. refunded сообщает, был ли откат фактически сделан.
+// FailJobWithQuotaRefund moves the job to failed and rolls back the quota reservation (§5.2),
+// all in one transaction. refunded reports whether the rollback was actually done.
 //
-// Guard WHERE status IN ('created','joining','recording','processing') — фазы до
-// доставки транскрипта: сбой/watchdog тут откатывает резерв (§5.2).
-// failJob зовётся из pollJob/StatusFailed и watchdog (orchestrator.go), которые клеймят
-// любую из этих фаз. summarizing исключён намеренно: транскрипт уже доставлен, встреча
-// использована (сбой саммари идёт через SetJobFailedSummary без отката, §5.2/§7.0).
+// Guard WHERE status IN ('created','joining','recording','processing') - phases before
+// transcript delivery: a failure/watchdog here rolls back the reservation (§5.2).
+// failJob is called from pollJob/StatusFailed and the watchdog (orchestrator.go), which claim
+// any of these phases. summarizing is excluded on purpose: the transcript is already delivered, the meeting
+// is used (a summary failure goes through SetJobFailedSummary without rollback, §5.2/§7.0).
 //
-// RowsAffected=0 (второй тик / уже закрыта) → refunded=false, err=nil: ничего не
-// откатываем, повторный откат вернул бы квоту дважды. is_trial решает направление:
-// триал — возврат reserved_minutes в users.trial_minutes_used, подписка —
-// возврат reserved_minutes в subscriptions.minutes_balance.
+// RowsAffected=0 (second tick / already closed) -> refunded=false, err=nil: nothing
+// is rolled back, a repeated rollback would return the quota twice. is_trial decides the direction:
+// trial - return reserved_minutes to users.trial_minutes_used, subscription -
+// return reserved_minutes to subscriptions.minutes_balance.
 func (s *Storage) FailJobWithQuotaRefund(ctx context.Context, jobID int64, reason string) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -907,7 +907,7 @@ func (s *Storage) FailJobWithQuotaRefund(ctx context.Context, jobID int64, reaso
 		jobID, reason,
 	).Scan(&isTrial, &subID, &userID, &reservedMinutes)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Уже не в активной фазе (второй тик / закрыта другим путём) — откат не нужен.
+		// No longer in an active phase (second tick / closed by another path) - no rollback needed.
 		return false, nil
 	}
 	if err != nil {
@@ -944,13 +944,13 @@ func (s *Storage) FailJobWithQuotaRefund(ctx context.Context, jobID int64, reaso
 	return true, nil
 }
 
-// Balance отдаёт остаток квоты для /balance и пушей F9. Активная подписка имеет
-// приоритет над триалом до expires_at, даже если минуты уже израсходованы.
-// trialLimitMinutes — лимит триала в минутах.
+// Balance returns the remaining quota for /balance and F9 pushes. An active subscription has
+// priority over the trial until expires_at, even if the minutes are already used up.
+// trialLimitMinutes - trial limit in minutes.
 func (s *Storage) Balance(ctx context.Context, userID int64, trialLimitMinutes int) (Balance, error) {
-	// Агрегация по активным строкам подписки (модель 1:1: у юзера их может быть
-	// несколько). SUM/MAX по пустому набору дают NULL — COALESCE сводит к нулю,
-	// MAX(expires_at) сканируется в *time.Time (NULL при отсутствии строк).
+	// Aggregation over active subscription rows (1:1 model: a user may have
+	// several). SUM/MAX over an empty set give NULL - COALESCE reduces it to zero,
+	// MAX(expires_at) is scanned into *time.Time (NULL when there are no rows).
 	var (
 		sumBalance int
 		sumLimit   int
@@ -984,18 +984,18 @@ func (s *Storage) Balance(ctx context.Context, userID int64, trialLimitMinutes i
 	}
 	return Balance{
 		IsSubscription: false,
-		// max(0, ...): если оператор понизит trial limit ниже уже
-		// израсходованного used, /balance не должен показать отрицательный остаток
-		// (приём всё равно блокирует CreateJob по WHERE used < limit).
+		// max(0, ...): if the operator lowers the trial limit below the already
+		// used amount, /balance must not show a negative remainder
+		// (intake still blocks CreateJob by WHERE used < limit).
 		Remaining: max(0, trialLimitMinutes-used),
 		Limit:     trialLimitMinutes,
 		ExpiresAt: nil,
 	}, nil
 }
 
-// HasActiveSubscription сообщает, есть ли у пользователя оплаченный период,
-// который ещё не истёк. Баланс встреч не учитываем: поддержка остаётся платной
-// привилегией до конца оплаченного периода.
+// HasActiveSubscription reports whether the user has a paid period
+// that has not expired yet. The meeting balance is not considered: support stays a paid
+// privilege until the end of the paid period.
 func (s *Storage) HasActiveSubscription(ctx context.Context, userID int64) (bool, error) {
 	var active bool
 	err := s.pool.QueryRow(ctx,
@@ -1032,30 +1032,30 @@ func (s *Storage) RecurringProfile(ctx context.Context, userID int64) (Recurring
 	return p, true, nil
 }
 
-// RecordSuccessfulPayment записывает успешный платёж и создаёт новый период
-// подписки (db.md §5.4, модель «строка на платёж» 1:1) — два statement в одной
-// транзакции.
+// RecordSuccessfulPayment records a successful payment and creates a new subscription
+// period (db.md §5.4, "row per payment" 1:1 model) - two statements in one
+// transaction.
 //
-// ПОЧЕМУ ДВА STATEMENT, А НЕ ОДИН CTE: линковку payments.subscription_id нельзя
-// сделать финальным UPDATE внутри того же CTE — Postgres исполняет весь запрос на
-// одном снимке, и строка, вставленная CTE new_payment, НЕ видна сканированию
-// таблицы payments в том же statement (UPDATE подобрал бы 0 строк, FK остался бы
-// NULL). Поэтому: statement 1 (CTE) создаёт платёж+подписку и ВОЗВРАЩАЕТ их id;
-// statement 2 в той же tx проставляет subscription_id (он уже видит свою строку).
+// WHY TWO STATEMENTS, NOT ONE CTE: linking payments.subscription_id cannot
+// be done as a final UPDATE inside the same CTE - Postgres executes the whole query on
+// one snapshot, and the row inserted by the new_payment CTE is NOT visible to the scan of
+// the payments table in the same statement (the UPDATE would pick up 0 rows, the FK would stay
+// NULL). Hence: statement 1 (CTE) creates the payment+subscription and RETURNS their ids;
+// statement 2 in the same tx sets subscription_id (it already sees its own row).
 //
-// Идемпотентность: ретрай Telegram с тем же telegram_payment_charge_id →
-// ON CONFLICT DO NOTHING → new_payment пуст → new_sub (WHERE EXISTS) не создаётся →
-// SELECT отдаёт (NULL, NULL) → statement 2 пропускается. Дубля платежа/подписки нет.
-// Конкурентный повтор того же charge_id сериализуется UNIQUE-индексом charge_id
-// (второй INSERT...ON CONFLICT ждёт коммита первого), поэтому подписка не дублируется
-// и orphan-строк не возникает.
+// Idempotency: a Telegram retry with the same telegram_payment_charge_id ->
+// ON CONFLICT DO NOTHING -> new_payment is empty -> new_sub (WHERE EXISTS) is not created ->
+// SELECT returns (NULL, NULL) -> statement 2 is skipped. No duplicate payment/subscription.
+// A concurrent repeat of the same charge_id is serialized by the UNIQUE index on charge_id
+// (the second INSERT...ON CONFLICT waits for the first to commit), so the subscription is not duplicated
+// and no orphan rows appear.
 //
-// Линковка в той же транзакции: FK не остаётся NULL, поэтому refund (§5.9) всегда
-// находит строку подписки для деактивации.
+// Linking in the same transaction: the FK does not stay NULL, so a refund (§5.9) always
+// finds the subscription row to deactivate.
 //
-// expires_at = now() + 30 дней: новый период не зависит от остальных активных
-// строк юзера (без chain). minutesPerPeriod — рабочий лимит подписки; legacy
-// meetings_* поля заполняются эквивалентом в часах до удаления старого UI/F9-кода.
+// expires_at = now() + 30 days: the new period does not depend on the user's other active
+// rows (no chain). minutesPerPeriod - the working subscription limit; legacy
+// meetings_* fields are filled with the equivalent in hours until the old UI/F9 code is removed.
 func (s *Storage) RecordSuccessfulPayment(ctx context.Context, p PaymentInput, minutesPerPeriod int) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -1071,9 +1071,9 @@ func (s *Storage) RecordSuccessfulPayment(ctx context.Context, p PaymentInput, m
 		return fmt.Errorf("record payment lock user %d: %w", p.UserID, err)
 	}
 
-	// Параметры $1..$10 идут линейно по порядку Go-аргументов (рассинхрон SQL↔args
-	// в платёжной записи особенно опасен). new_sub читает new_payment напрямую (CTE,
-	// не таблицу — это видно), поэтому гейт WHERE EXISTS работает корректно.
+	// Parameters $1..$10 go linearly in the order of the Go arguments (an SQL<->args mismatch
+	// in a payment record is especially dangerous). new_sub reads new_payment directly (a CTE,
+	// not the table - this is visible), so the WHERE EXISTS gate works correctly.
 	var paymentID, subID *int64
 	err = tx.QueryRow(ctx,
 		`WITH new_payment AS (
@@ -1100,10 +1100,10 @@ func (s *Storage) RecordSuccessfulPayment(ctx context.Context, p PaymentInput, m
 		return fmt.Errorf("record payment insert for user %d: %w", p.UserID, err)
 	}
 
-	// paymentID==nil → ретрай (ON CONFLICT погасил вставку): линковать нечего.
-	// Новый платёж всегда создаёт new_sub, поэтому при paymentID!=nil subID!=nil.
-	// Guard subscription_id IS NULL делает повторную линковку невозможной (денежный
-	// UPDATE всегда под guard, db.md §6) — fail-safe против будущего второго пути.
+	// paymentID==nil -> retry (ON CONFLICT swallowed the insert): nothing to link.
+	// A new payment always creates new_sub, so with paymentID!=nil subID!=nil.
+	// The subscription_id IS NULL guard makes a repeated link impossible (a money
+	// UPDATE is always under a guard, db.md §6) - fail-safe against a future second path.
 	if paymentID != nil {
 		_, err = tx.Exec(ctx,
 			`UPDATE payments SET subscription_id = $2 WHERE id = $1 AND subscription_id IS NULL`,
@@ -1688,9 +1688,9 @@ func (s *Storage) FinalizeYookassaPayment(ctx context.Context, paymentID string,
 		result.RecurringActive = true
 		result.NextChargeAt = result.ExpiresAt
 	} else if autoRenew && result.RecurringPayment {
-		// blocked профиль оставляем как есть: он требует ручной проверки, и запоздалый
-		// success in-flight платежа не должен молча его переактивировать. Подписка выше
-		// уже продлена; автопродление возобновит только оператор.
+		// A blocked profile is left as is: it needs manual review, and a late
+		// success of an in-flight payment must not silently reactivate it. The subscription above
+		// is already extended; only the operator will resume auto-renewal.
 		tag, err = tx.Exec(ctx,
 			`UPDATE recurring_profiles
 			 SET status = 'active',
@@ -2006,34 +2006,34 @@ func (s *Storage) FailRecurringYookassaPayment(ctx context.Context, paymentID st
 	return true, userID, profileChanged, nil
 }
 
-// newIdempotenceKey генерирует UUID v4 на crypto/rand без внешних зависимостей
-// (принцип «минимум кода»: не тащим google/uuid ради 16 байт). Ключ генерируется
-// однократно в BeginRefund и переиспользуется на ретраях через сохранённую refunds-строку
-// (fallback-SELECT): один и тот же idempotence_key уходит в заголовок Idempotence-Key
-// ЮKassa, защищая от двойного списания (db.md §5.9, api/yookassa §3).
+// newIdempotenceKey generates a UUID v4 on crypto/rand without external dependencies
+// (the "minimum code" principle: we do not pull in google/uuid for 16 bytes). The key is generated
+// once in BeginRefund and reused on retries via the saved refunds row
+// (fallback SELECT): the same idempotence_key goes into the YooKassa Idempotence-Key
+// header, protecting against a double charge (db.md §5.9, api/yookassa §3).
 func newIdempotenceKey() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("generate idempotence key: %w", err)
 	}
-	b[6] = b[6]&0x0f | 0x40 // версия 4
-	b[8] = b[8]&0x3f | 0x80 // вариант RFC 4122
+	b[6] = b[6]&0x0f | 0x40 // version 4
+	b[8] = b[8]&0x3f | 0x80 // RFC 4122 variant
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
-// BeginRefund — фаза 1 двухфазного refund (db.md §5.9): создаёт pending-возврат с
-// idempotence_key ДО вызова ЮKassa. amount берём из payments (full-only, 1:1) и
-// возвращаем — будущий billing.Refund положит его в REST-body POST /v3/refunds.
+// BeginRefund - phase 1 of a two-phase refund (db.md §5.9): creates a pending refund with
+// idempotence_key BEFORE calling YooKassa. amount is taken from payments (full-only, 1:1) and
+// returned - the future billing.Refund will put it in the REST body of POST /v3/refunds.
 //
-// refunds_active_idx (partial UNIQUE на payment_id WHERE status IN pending/succeeded) и
-// UNIQUE(idempotence_key) физически закрывают гонку двойного BeginRefund: ON CONFLICT
-// DO NOTHING гасит вставку, RowsAffected=0, и мы отдаём существующий активный возврат —
-// идемпотентный повтор того же намерения (тот же idemKey переживает ретрай, api §3).
+// refunds_active_idx (partial UNIQUE on payment_id WHERE status IN pending/succeeded) and
+// UNIQUE(idempotence_key) physically close the double-BeginRefund race: ON CONFLICT
+// DO NOTHING swallows the insert, RowsAffected=0, and we return the existing active refund -
+// an idempotent repeat of the same intent (the same idemKey survives a retry, api §3).
 //
-// Оба statement — в одной транзакции (как прочие денежные методы storage): INSERT и
-// fallback-SELECT видят согласованный снимок относительно параллельной финализации.
+// Both statements are in one transaction (like the other money methods of storage): the INSERT and
+// the fallback SELECT see a consistent snapshot relative to concurrent finalization.
 //
-// Сентинел ErrPaymentNotRefundable: платёж не succeeded/отсутствует И активного возврата нет.
+// Sentinel ErrPaymentNotRefundable: the payment is not succeeded/missing AND there is no active refund.
 func (s *Storage) BeginRefund(ctx context.Context, providerChargeID string) (refundID int64, idemKey string, amountKopecks int64, err error) {
 	key, err := newIdempotenceKey()
 	if err != nil {
@@ -2046,8 +2046,8 @@ func (s *Storage) BeginRefund(ctx context.Context, providerChargeID string) (ref
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// INSERT...SELECT берёт amount из платежа (full-only refund). ON CONFLICT DO NOTHING
-	// гасится либо refunds_active_idx (уже есть активный возврат), либо UNIQUE idempotence_key.
+	// INSERT...SELECT takes amount from the payment (full-only refund). ON CONFLICT DO NOTHING
+	// is triggered by either refunds_active_idx (an active refund exists) or UNIQUE idempotence_key.
 	err = tx.QueryRow(ctx,
 		`INSERT INTO refunds (payment_id, idempotence_key, amount, status)
 		 SELECT id, $2, amount, 'pending' FROM payments
@@ -2058,10 +2058,10 @@ func (s *Storage) BeginRefund(ctx context.Context, providerChargeID string) (ref
 	).Scan(&refundID, &idemKey, &amountKopecks)
 	switch {
 	case err == nil:
-		// вставили новый pending-возврат
+		// inserted a new pending refund
 	case errors.Is(err, pgx.ErrNoRows):
-		// RowsAffected=0: либо платёж не succeeded/нет, либо уже есть активный возврат.
-		// Достаём существующий активный возврат — идемпотентный повтор отдаёт его idemKey.
+		// RowsAffected=0: either the payment is not succeeded/missing, or an active refund already exists.
+		// Fetch the existing active refund - an idempotent repeat returns its idemKey.
 		err = tx.QueryRow(ctx,
 			`SELECT r.id, r.idempotence_key, r.amount FROM refunds r
 			 JOIN payments p ON p.id = r.payment_id
@@ -2071,9 +2071,9 @@ func (s *Storage) BeginRefund(ctx context.Context, providerChargeID string) (ref
 		).Scan(&refundID, &idemKey, &amountKopecks)
 		switch {
 		case err == nil:
-			// нашли существующий активный возврат
+			// found the existing active refund
 		case errors.Is(err, pgx.ErrNoRows):
-			// Ни succeeded-платежа, ни активного возврата — возвращать нечего.
+			// Neither a succeeded payment nor an active refund - nothing to return.
 			return 0, "", 0, ErrPaymentNotRefundable
 		default:
 			return 0, "", 0, fmt.Errorf("begin refund lookup for charge %s: %w", providerChargeID, err)
@@ -2088,16 +2088,16 @@ func (s *Storage) BeginRefund(ctx context.Context, providerChargeID string) (ref
 	return refundID, idemKey, amountKopecks, nil
 }
 
-// FinalizeRefund — фаза 2 двухфазного refund (db.md §5.9): после ответа ЮKassa фиксирует
-// результат в одной транзакции. Идемпотентна по refundID через guard WHERE status='pending'.
+// FinalizeRefund - phase 2 of a two-phase refund (db.md §5.9): after the YooKassa response it records
+// the result in one transaction. Idempotent by refundID via the guard WHERE status='pending'.
 //
-// При status='succeeded': помечаем платёж refunded, деактивируем ровно ту строку подписки
-// что купил платёж (модель 1:1, expires_at=now()), и отключаем recurring profile. При failed/canceled платёж и подписку
-// НЕ трогаем — деньги не вернулись, доступ сохраняется. Повторная финализация (повторный
-// webhook/триггер) даёт RowsAffected=0 на шаге 1 → no-op commit, err=nil.
+// On status='succeeded': mark the payment refunded, deactivate exactly the subscription row
+// that the payment bought (1:1 model, expires_at=now()), and disable the recurring profile. On failed/canceled the payment and subscription
+// are NOT touched - the money was not returned, access is kept. A repeated finalization (repeated
+// webhook/trigger) gives RowsAffected=0 at step 1 -> no-op commit, err=nil.
 //
-// providerRefundID пустой пишем как NULL (partial-unique refunds_provider_idx не считает
-// NULL коллизией); raw nil → JSONB NULL.
+// An empty providerRefundID is written as NULL (the partial-unique refunds_provider_idx does not count
+// NULL as a collision); raw nil -> JSONB NULL.
 func (s *Storage) FinalizeRefund(ctx context.Context, refundID int64, providerRefundID string, status RefundStatus, raw []byte) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -2105,8 +2105,8 @@ func (s *Storage) FinalizeRefund(ctx context.Context, refundID int64, providerRe
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Пустой provider_refund_id → NULL: иначе пустые строки от failed/canceled столкнулись бы
-	// в refunds_provider_idx (provider_refund_id известен только для succeeded).
+	// Empty provider_refund_id -> NULL: otherwise empty strings from failed/canceled would collide
+	// in refunds_provider_idx (provider_refund_id is known only for succeeded).
 	var provArg *string
 	if providerRefundID != "" {
 		provArg = &providerRefundID
@@ -2120,8 +2120,8 @@ func (s *Storage) FinalizeRefund(ctx context.Context, refundID int64, providerRe
 		refundID, status, provArg, raw,
 	).Scan(&paymentID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Уже финализирован (повторный триггер/webhook) — no-op идемпотентно.
-		// Ничего не записали: defer Rollback закроет пустую транзакцию, Commit не нужен.
+		// Already finalized (repeated trigger/webhook) - an idempotent no-op.
+		// Nothing was written: the deferred Rollback closes the empty transaction, Commit is not needed.
 		return nil
 	}
 	if err != nil {
@@ -2131,7 +2131,7 @@ func (s *Storage) FinalizeRefund(ctx context.Context, refundID int64, providerRe
 	var paymentUserID int64
 	var recurringDisabled bool
 
-	// failed/canceled: деньги не вернулись — платёж и подписку оставляем как есть.
+	// failed/canceled: the money was not returned - leave the payment and subscription as they are.
 	if status == RefundSucceeded {
 		var subID *int64
 		err = tx.QueryRow(ctx,
@@ -2142,20 +2142,20 @@ func (s *Storage) FinalizeRefund(ctx context.Context, refundID int64, providerRe
 		).Scan(&subID, &paymentUserID)
 		switch {
 		case err == nil:
-			// платёж помечен refunded; subID может быть NULL у edge-платежа без линковки
+			// payment marked refunded; subID may be NULL for an edge payment without a link
 		case errors.Is(err, pgx.ErrNoRows):
-			// Инвариант: refund заводится только для succeeded-платежа (BeginRefund), значит
-			// сюда платёж приходит succeeded. 0 строк = платёж уже не succeeded (рассинхрон/
-			// ручная правка). Откатываем всю транзакцию (defer Rollback) вместо commit: иначе
-			// зафиксировали бы refunds.status='succeeded' при неотменённом платеже — fail-silent
-			// на денежном пути. Возврат остаётся pending = видимое «не завершено» для оператора.
+			// Invariant: a refund is created only for a succeeded payment (BeginRefund), so
+			// the payment arrives here as succeeded. 0 rows = the payment is no longer succeeded (desync/
+			// manual edit). Roll back the whole transaction (deferred Rollback) instead of commit: otherwise
+			// refunds.status='succeeded' would be committed with the payment not marked - fail-silent
+			// on the money path. The refund stays pending = a visible "not completed" for the operator.
 			return fmt.Errorf("finalize refund %d: payment %d not in succeeded state, rolling back", refundID, paymentID)
 		default:
 			return fmt.Errorf("finalize refund %d mark payment refunded: %w", refundID, err)
 		}
 
-		// Деактивируем ровно ту строку подписки (модель 1:1). Guard expires_at > now()
-		// делает повтор безвредным. subID может быть NULL у edge-платежа без линковки.
+		// Deactivate exactly that subscription row (1:1 model). The guard expires_at > now()
+		// makes a repeat harmless. subID may be NULL for an edge payment without a link.
 		if subID != nil {
 			_, err = tx.Exec(ctx,
 				`UPDATE subscriptions SET expires_at = now()
@@ -2198,12 +2198,12 @@ func (s *Storage) FinalizeRefund(ctx context.Context, refundID int64, providerRe
 	return nil
 }
 
-// SubExpiringUsers — кандидаты F9-пуша «подписка истекает через 3 дня» (db.md §5.6).
-// Агрегация по юзеру (модель 1:1 — несколько активных строк), пуш по КОНЦУ покрытия
-// MAX(expires_at), ровно один на юзера. Если осталось меньше часа, приоритет у
-// sub_low_balance: так один тик не шлёт два подписочных пуша подряд. Дедуп — notified < COALESCE(MAX(paid_at),
-// -infinity): COALESCE спасает от MAX=NULL (сравнение с NULL дало бы NULL и строка прошла бы),
-// первый пуш ловит ветка notified IS NULL, повторный после нового платежа — сдвиг MAX(paid_at).
+// SubExpiringUsers - candidates for the F9 push "subscription expires in 3 days" (db.md §5.6).
+// Aggregation per user (1:1 model - several active rows), the push is by the END of coverage
+// MAX(expires_at), exactly one per user. If less than an hour is left, sub_low_balance
+// takes priority: so one tick does not send two subscription pushes in a row. Dedup - notified < COALESCE(MAX(paid_at),
+// -infinity): COALESCE protects against MAX=NULL (a comparison with NULL gives NULL and the row would pass),
+// the first push is caught by the branch notified IS NULL, a repeat after a new payment - by the shift of MAX(paid_at).
 func (s *Storage) SubExpiringUsers(ctx context.Context) ([]int64, error) {
 	rows, err := s.pool.Query(ctx,
 		`WITH coverage AS (
@@ -2233,14 +2233,14 @@ func (s *Storage) SubExpiringUsers(ctx context.Context) ([]int64, error) {
 	return scanUserIDs(rows, "sub expiring users")
 }
 
-// SubExpiredUsers — кандидаты F9-пуша «подписка истекла» (db.md §5.6, по образцу).
-// Отличие от SubExpiring: у юзера НЕТ активного покрытия (нет строки expires_at>now AND
-// minutes_balance>0), но есть succeeded-платёж и MAX(expires_at) уже в прошлом. JOIN на ВСЕ строки
-// подписок (без фильтра expires_at) — иначе истёкшие строки выпали бы и MAX не посчитался;
-// отсутствие активного покрытия проверяем через NOT EXISTS. INNER JOIN на payments (а не LEFT):
-// «истекла» имеет смысл только для платившего юзера. Дедуп — тот же COALESCE-паттерн §5.6.
-// Refund-юзер (единственный платёж стал refunded) сюда НЕ попадает — INNER JOIN на 'succeeded':
-// возврат = добровольный выход с возвратом денег, не естественное истечение (намеренно).
+// SubExpiredUsers - candidates for the F9 push "subscription expired" (db.md §5.6, by analogy).
+// Difference from SubExpiring: the user has NO active coverage (no row with expires_at>now AND
+// minutes_balance>0), but has a succeeded payment and MAX(expires_at) already in the past. JOIN on ALL subscription
+// rows (without the expires_at filter) - otherwise expired rows would drop out and MAX would not be computed;
+// the absence of active coverage is checked via NOT EXISTS. INNER JOIN on payments (not LEFT):
+// "expired" makes sense only for a user who paid. Dedup - the same COALESCE pattern as §5.6.
+// A refund user (the only payment became refunded) does NOT get here - INNER JOIN on 'succeeded':
+// a refund = a voluntary exit with money back, not a natural expiry (intentional).
 func (s *Storage) SubExpiredUsers(ctx context.Context) ([]int64, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT u.telegram_id
@@ -2262,8 +2262,8 @@ func (s *Storage) SubExpiredUsers(ctx context.Context) ([]int64, error) {
 	return scanUserIDs(rows, "sub expired users")
 }
 
-// PaymentViewedWithoutPaidUsers — кандидаты дожима после просмотра оплаты без успешной оплаты.
-// Событие должно быть старше 24 часов; активную подписку и оплату после просмотра исключаем.
+// PaymentViewedWithoutPaidUsers - candidates for a nudge after viewing a payment without a successful payment.
+// The event must be older than 24 hours; an active subscription and a payment after the view are excluded.
 func (s *Storage) PaymentViewedWithoutPaidUsers(ctx context.Context) ([]int64, error) {
 	rows, err := s.pool.Query(ctx,
 		`WITH viewed AS (
@@ -2300,7 +2300,7 @@ func (s *Storage) PaymentViewedWithoutPaidUsers(ctx context.Context) ([]int64, e
 	return scanUserIDs(rows, "payment viewed without paid users")
 }
 
-// SubLowBalanceUsers — платящие пользователи с активным календарным периодом и остатком < 60 минут.
+// SubLowBalanceUsers - paying users with an active calendar period and a remainder < 60 minutes.
 func (s *Storage) SubLowBalanceUsers(ctx context.Context) ([]int64, error) {
 	rows, err := s.pool.Query(ctx,
 		`WITH balances AS (
@@ -2341,7 +2341,7 @@ func (s *Storage) SubLowBalanceUsers(ctx context.Context) ([]int64, error) {
 	return scanUserIDs(rows, "sub low balance users")
 }
 
-// SubEmptyBalanceUsers — платящие пользователи, у которых часы закончились до календарного expiry.
+// SubEmptyBalanceUsers - paying users whose hours ran out before the calendar expiry.
 func (s *Storage) SubEmptyBalanceUsers(ctx context.Context) ([]int64, error) {
 	rows, err := s.pool.Query(ctx,
 		`WITH balances AS (
@@ -2382,12 +2382,12 @@ func (s *Storage) SubEmptyBalanceUsers(ctx context.Context) ([]int64, error) {
 	return scanUserIDs(rows, "sub empty balance users")
 }
 
-// TrialEndingUsers — кандидаты F9-пуша «триал заканчивается»: осталось меньше часа
-// (trialLimitMinutes - trial_minutes_done < 60) и пуша ещё не было.
-// Считаем по trial_minutes_done (реально завершённые), не по used (резерв) — иначе пуш
-// сработал бы на сфейленной встрече, которая откатила резерв (architecture.md §7.2).
-// Дедуп простой «notify once» через IS NULL: у триала нет paid_at, в MVP он не сбрасывается.
-// NOT EXISTS на календарно активную подписку — платящим юзерам этот пуш не нужен.
+// TrialEndingUsers - candidates for the F9 push "trial is ending": less than an hour left
+// (trialLimitMinutes - trial_minutes_done < 60) and no push yet.
+// Counted by trial_minutes_done (actually completed), not by used (reservation) - otherwise the push
+// would fire on a failed meeting that rolled back the reservation (architecture.md §7.2).
+// Dedup is a simple "notify once" via IS NULL: a trial has no paid_at, in the MVP it is not reset.
+// NOT EXISTS on a calendar-active subscription - paying users do not need this push.
 func (s *Storage) TrialEndingUsers(ctx context.Context, trialLimitMinutes int) ([]int64, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT u.telegram_id
@@ -2406,7 +2406,7 @@ func (s *Storage) TrialEndingUsers(ctx context.Context, trialLimitMinutes int) (
 	return scanUserIDs(rows, "trial ending users")
 }
 
-// scanUserIDs собирает telegram_id из строк трёх F9-выборок (один формат результата).
+// scanUserIDs collects telegram_id from the rows of the three F9 selections (one result format).
 func scanUserIDs(rows pgx.Rows, op string) ([]int64, error) {
 	defer rows.Close()
 	var ids []int64
@@ -2423,8 +2423,8 @@ func scanUserIDs(rows pgx.Rows, op string) ([]int64, error) {
 	return ids, nil
 }
 
-// MarkTrialLowNotified ставит notified_trial_low_at=now() после успешного пуша (идемпотентно
-// перезаписывает — дедуп выборки страхует от повторной отправки между тиками).
+// MarkTrialLowNotified sets notified_trial_low_at=now() after a successful push (idempotently
+// overwrites - the selection dedup guards against a repeated send between ticks).
 func (s *Storage) MarkTrialLowNotified(ctx context.Context, userID int64) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE users SET notified_trial_low_at = now() WHERE telegram_id = $1`, userID)
@@ -2439,7 +2439,7 @@ func (s *Storage) MarkTrialLowAndNudgeSent(ctx context.Context, userID int64) er
 		`UPDATE users SET notified_trial_low_at = now() WHERE telegram_id = $1`)
 }
 
-// MarkSubExpiringNotified ставит notified_sub_expiring_at=now() после успешного пуша.
+// MarkSubExpiringNotified sets notified_sub_expiring_at=now() after a successful push.
 func (s *Storage) MarkSubExpiringNotified(ctx context.Context, userID int64) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE users SET notified_sub_expiring_at = now() WHERE telegram_id = $1`, userID)
@@ -2454,7 +2454,7 @@ func (s *Storage) MarkSubExpiringAndNudgeSent(ctx context.Context, userID int64)
 		`UPDATE users SET notified_sub_expiring_at = now() WHERE telegram_id = $1`)
 }
 
-// MarkSubExpiredNotified ставит notified_sub_expired_at=now() после успешного пуша.
+// MarkSubExpiredNotified sets notified_sub_expired_at=now() after a successful push.
 func (s *Storage) MarkSubExpiredNotified(ctx context.Context, userID int64) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE users SET notified_sub_expired_at = now() WHERE telegram_id = $1`, userID)
@@ -2500,10 +2500,10 @@ func (s *Storage) markLegacyAndNudgeSent(ctx context.Context, userID int64, clas
 	return nil
 }
 
-// SetConsent фиксирует согласие 152-ФЗ (F0). Guard WHERE consent_at IS NULL
-// делает операцию идемпотентной: повторное согласие не перетирает момент
-// первого (юридически значим именно он). RowsAffected=0 здесь не ошибка —
-// согласие уже было дано ранее.
+// SetConsent records the 152-FZ consent (F0). The guard WHERE consent_at IS NULL
+// makes the operation idempotent: a repeated consent does not overwrite the moment
+// of the first one (that is the legally significant one). RowsAffected=0 here is not an error -
+// consent was already given earlier.
 func (s *Storage) SetConsent(ctx context.Context, telegramID int64) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE users SET consent_at = now() WHERE telegram_id = $1 AND consent_at IS NULL`,

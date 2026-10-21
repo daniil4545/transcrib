@@ -1,10 +1,10 @@
 -- +goose Up
--- Слайс payments (F6 триал + F7 оплата/возврат ЮKassa). Канон схемы — db.md §3.3-3.6,
--- модель «строка на платёж» 1:1 (ревизия 1.2). users НЕ трогаем: trial/notified-колонки
--- уже созданы в 00001 (повторный ADD COLUMN упал бы с column already exists).
+-- Payments slice (F6 trial + F7 YooKassa payment/refund). Schema canon: db.md §3.3-3.6,
+-- the "row per payment" 1:1 model (revision 1.2). users is NOT touched: the trial/notified columns
+-- were already created in 00001 (a repeated ADD COLUMN would fail with column already exists).
 
--- subscriptions (db.md §3.3): каждый успешный платёж = отдельная строка (1:1),
--- продление = новая строка с chain expires_at; у юзера может быть несколько активных.
+-- subscriptions (db.md §3.3): each successful payment = a separate row (1:1),
+-- renewal = a new row with a chained expires_at; a user may have several active ones.
 CREATE TABLE subscriptions (
     id               BIGSERIAL   PRIMARY KEY,
     user_id          BIGINT      NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
@@ -16,22 +16,22 @@ CREATE TABLE subscriptions (
     CHECK (expires_at > paid_at)
 );
 
--- partial: активные строки с остатком — для резерва §5.1.
+-- partial: active rows with a remainder - for the reservation §5.1.
 CREATE INDEX subscriptions_user_active_idx
     ON subscriptions (user_id, expires_at DESC)
     WHERE meetings_balance > 0;
--- partial: F9-тик «подписка истекает через 3 дня».
+-- partial: F9 tick "subscription expires in 3 days".
 CREATE INDEX subscriptions_expiring_idx
     ON subscriptions (expires_at)
     WHERE meetings_balance > 0;
--- non-partial: chain MAX(expires_at) §5.4 и агрегации по юзеру §5.1/§5.6 (любой баланс).
+-- non-partial: chain MAX(expires_at) §5.4 and per-user aggregations §5.1/§5.6 (any balance).
 CREATE INDEX subscriptions_user_expiry_idx
     ON subscriptions (user_id, expires_at DESC);
 
--- payments (db.md §3.4): PK=id (запись нужна до charge_id в стадии pending).
--- telegram_payment_charge_id UNIQUE nullable — единственный механизм идемпотентности
--- от ретраев Telegram (§5.4 ON CONFLICT). Частичные возвраты вне скоупа: amount_refunded
--- и partially_refunded убраны (full-only 1:1).
+-- payments (db.md §3.4): PK=id (the record is needed before charge_id at the pending stage).
+-- telegram_payment_charge_id UNIQUE nullable is the only idempotence mechanism
+-- against Telegram retries (§5.4 ON CONFLICT). Partial refunds are out of scope: amount_refunded
+-- and partially_refunded were removed (full-only 1:1).
 CREATE TABLE payments (
     id                          BIGSERIAL   PRIMARY KEY,
     user_id                     BIGINT      NOT NULL REFERENCES users(telegram_id) ON DELETE RESTRICT,
@@ -52,7 +52,7 @@ CREATE TABLE payments (
     paid_at                     TIMESTAMPTZ,
     provider_paid_at            TIMESTAMPTZ,
     failed_at                   TIMESTAMPTZ,
-    -- succeeded/refunded обязаны нести charge_id (на нём держится ON CONFLICT §5.4).
+    -- succeeded/refunded must carry charge_id (ON CONFLICT §5.4 relies on it).
     CHECK (telegram_payment_charge_id IS NOT NULL OR status IN ('pending','failed'))
 );
 
@@ -63,8 +63,8 @@ CREATE INDEX payments_pending_idx
     ON payments (created_at)
     WHERE status = 'pending';
 
--- refunds (db.md §3.5): двухфазный возврат. Строка создаётся в pending ДО POST /v3/refunds
--- с детерминированным idempotence_key (нужен до вызова), provider_refund_id приходит из ответа.
+-- refunds (db.md §3.5): two-phase refund. The row is created in pending BEFORE POST /v3/refunds
+-- with a deterministic idempotence_key (needed before the call), provider_refund_id comes from the response.
 CREATE TABLE refunds (
     id                  BIGSERIAL   PRIMARY KEY,
     payment_id          BIGINT      NOT NULL REFERENCES payments(id),
@@ -78,21 +78,21 @@ CREATE TABLE refunds (
     completed_at        TIMESTAMPTZ
 );
 
--- partial UNIQUE: provider_refund_id уникален у ЮKassa, но NULL на стадии pending —
--- защита от повторной финализации/webhook.
+-- partial UNIQUE: provider_refund_id is unique at YooKassa, but NULL at the pending stage -
+-- protection against repeated finalization/webhook.
 CREATE UNIQUE INDEX refunds_provider_idx
     ON refunds (provider_refund_id)
     WHERE provider_refund_id IS NOT NULL;
--- partial UNIQUE: один активный возврат на платёж — закрывает гонку двойного BeginRefund.
+-- partial UNIQUE: one active refund per payment - closes the race of a double BeginRefund.
 CREATE UNIQUE INDEX refunds_active_idx
     ON refunds (payment_id)
     WHERE status IN ('pending','succeeded');
 CREATE INDEX refunds_payment_idx
     ON refunds (payment_id);
 
--- jobs: привязка к квоте (db.md §3.6). subscription_id NULL для триала, заполнен для подписки.
--- is_trial DEFAULT true бэкфилит существующие строки и сохраняет pre-P0 CreateJob рабочим
--- (он не знает про is_trial до Commit 2). CHECK гарантирует консистентность с subscription_id.
+-- jobs: binding to the quota (db.md §3.6). subscription_id is NULL for a trial, filled for a subscription.
+-- is_trial DEFAULT true backfills existing rows and keeps pre-P0 CreateJob working
+-- (it does not know about is_trial until Commit 2). CHECK guarantees consistency with subscription_id.
 ALTER TABLE jobs
     ADD COLUMN subscription_id BIGINT REFERENCES subscriptions(id) ON DELETE RESTRICT,
     ADD COLUMN is_trial        BOOLEAN NOT NULL DEFAULT true;
@@ -101,8 +101,8 @@ ALTER TABLE jobs ADD CONSTRAINT jobs_quota_check CHECK (
     (is_trial = false AND subscription_id IS NOT NULL)
 );
 
--- dedup живых джоб (db.md §3.6, объявлен в каноне — заводится здесь). failed_summary в
--- исключениях: финальный статус освобождает URL для повторной отправки.
+-- dedup of live jobs (db.md §3.6, declared in the canon - created here). failed_summary is in
+-- the exclusions: a final status frees the URL for resubmission.
 CREATE UNIQUE INDEX jobs_active_dedup_idx
     ON jobs (user_id, meeting_url)
     WHERE status NOT IN ('done','failed_join','failed','failed_summary');

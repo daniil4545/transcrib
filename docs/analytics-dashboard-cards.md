@@ -18,18 +18,18 @@ Day buckets: always cast to `::date` after `date_trunc`. Without the cast the co
 formatting.
 
 Runtime dashboard card names:
-- `Главные показатели`
-- `Воронка пользователей`
-- `Текущий этап пользователя`
-- `Новые пользователи по дням`
-- `Платежные ссылки по дням`
-- `Использование триала`
-- `Состояние подписок`
-- `Встречи`
-- `Длительность и списание минут`
-- `События бота`
-- `Возвраты`
-- `Операционный контроль`
+- `Главные показатели` (Key metrics)
+- `Воронка пользователей` (User funnel)
+- `Текущий этап пользователя` (Current user stage)
+- `Новые пользователи по дням` (New users per day)
+- `Платежные ссылки по дням` (Payment links per day)
+- `Использование триала` (Trial usage)
+- `Состояние подписок` (Subscription health)
+- `Встречи` (Meetings)
+- `Длительность и списание минут` (Duration and minute billing)
+- `События бота` (Bot events)
+- `Возвраты` (Refunds)
+- `Операционный контроль` (Operational control)
 
 ## Executive KPI
 

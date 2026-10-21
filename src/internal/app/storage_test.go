@@ -13,10 +13,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// jsonEqual сравнивает два JSON семантически через распарсенные значения:
-// JSONB канонизирует пробелы И переупорядочивает ключи объекта, поэтому
-// побайтовое/Compact-сравнение ложно падает на многоключевом литерале.
-// reflect.DeepEqual по распарсенному дереву нечувствителен к порядку ключей.
+// jsonEqual compares two JSON values semantically via parsed values:
+// JSONB canonicalizes whitespace AND reorders object keys, so a
+// byte-wise/Compact comparison falsely fails on a multi-key literal.
+// reflect.DeepEqual over the parsed tree is insensitive to key order.
 func jsonEqual(a, b []byte) bool {
 	var va, vb any
 	if err := json.Unmarshal(a, &va); err != nil {
@@ -28,16 +28,16 @@ func jsonEqual(a, b []byte) bool {
 	return reflect.DeepEqual(va, vb)
 }
 
-// Интеграционные тесты критических узлов (docs/testing.md: state machine, очередь).
-// Требуют поднятого Postgres: DATABASE_URL берётся из окружения (make test
-// подхватывает .env автоматически). Без DATABASE_URL тесты пропускаются —
-// голый go test работает без инфраструктуры.
+// Integration tests of critical nodes (docs/testing.md: state machine, queue).
+// They require a running Postgres: DATABASE_URL is taken from the environment (make test
+// picks up the env file automatically). Without DATABASE_URL the tests are skipped:
+// a bare go test works without infrastructure.
 
 func newTestStorage(t *testing.T) *Storage {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		t.Skip("DATABASE_URL не задан — интеграционный тест пропущен")
+		t.Skip("DATABASE_URL is not set: integration test skipped")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -47,9 +47,9 @@ func newTestStorage(t *testing.T) *Storage {
 	return NewStorage(pool)
 }
 
-// newTestUser создаёт юзера с уникальным отрицательным telegram_id: реальные
-// телеграмные id положительные, поэтому тестовые строки не пересекаются с
-// dev-данными. Cleanup подчищает сначала jobs (FK RESTRICT), потом юзера.
+// newTestUser creates a user with a unique negative telegram_id: real
+// Telegram ids are positive, so test rows do not collide with
+// dev data. Cleanup removes jobs first (FK RESTRICT), then the user.
 func newTestUser(t *testing.T, s *Storage) int64 {
 	t.Helper()
 	id := -time.Now().UnixNano()
@@ -74,7 +74,7 @@ func newTestUser(t *testing.T, s *Storage) int64 {
 	return id
 }
 
-// jobRow читает строку джобы напрямую из БД для проверки результата перехода.
+// jobRow reads a job row directly from the DB to verify the result of a transition.
 func jobRow(t *testing.T, s *Storage, id int64) (status string, extID *string, raw []byte) {
 	t.Helper()
 	err := s.pool.QueryRow(context.Background(),
@@ -86,9 +86,9 @@ func jobRow(t *testing.T, s *Storage, id int64) (status string, extID *string, r
 	return status, extID, raw
 }
 
-// mustClaim возвращает множество заклеймленных id: в dev-БД могут лежать чужие
-// джобы (claim лишь bump'ает их updated_at, статус не трогает), поэтому тест
-// проверяет только вхождение своих.
+// mustClaim returns the set of claimed ids: the dev DB may hold foreign
+// jobs (claim only bumps their updated_at and leaves the status alone), so the test
+// checks only that its own jobs are included.
 func mustClaim(t *testing.T, s *Storage, interval time.Duration) map[int64]bool {
 	t.Helper()
 	jobs, err := s.ClaimJobsForWork(context.Background(), interval, 500)
@@ -102,13 +102,13 @@ func mustClaim(t *testing.T, s *Storage, interval time.Duration) map[int64]bool 
 	return ids
 }
 
-// TestClaimJobsForWork_Backoff — критический узел: created клеймится всегда,
-// processing — только когда updated_at старше pollInterval, и сам claim
-// сдвигает updated_at (без bump джоба поллилась бы каждым тиком).
+// TestClaimJobsForWork_Backoff is a critical node: created is always claimed,
+// processing only when updated_at is older than pollInterval, and the claim itself
+// shifts updated_at (without the bump the job would be polled on every tick).
 func TestClaimJobsForWork_Backoff(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
-	// Разные юзеры упрощают проверку очереди: каждая Job живёт в независимой квоте.
+	// Different users simplify the queue check: each Job lives in an independent quota.
 	createdUser := newTestUser(t, s)
 	processingUser := newTestUser(t, s)
 
@@ -124,16 +124,16 @@ func TestClaimJobsForWork_Backoff(t *testing.T) {
 		t.Fatalf("submit job: %v", err)
 	}
 
-	// Свежая processing (updated_at = now) под бэкофф не попадает, created — всегда.
+	// A fresh processing job (updated_at = now) is not subject to backoff, created always is.
 	got := mustClaim(t, s, time.Minute)
 	if !got[created.ID] {
-		t.Error("created-джоба не заклеймлена")
+		t.Error("created job was not claimed")
 	}
 	if got[processing.ID] {
-		t.Error("processing-джоба заклеймлена до истечения pollInterval")
+		t.Error("processing job was claimed before pollInterval elapsed")
 	}
 
-	// Состариваем processing — теперь должна клеймиться.
+	// Age the processing job: now it must be claimed.
 	if _, err := s.pool.Exec(ctx,
 		`UPDATE jobs SET updated_at = now() - interval '2 minutes' WHERE id = $1`,
 		processing.ID); err != nil {
@@ -141,33 +141,33 @@ func TestClaimJobsForWork_Backoff(t *testing.T) {
 	}
 	got = mustClaim(t, s, time.Minute)
 	if !got[processing.ID] {
-		t.Error("processing-джоба не заклеймлена после истечения pollInterval")
+		t.Error("processing job was not claimed after pollInterval elapsed")
 	}
 
-	// Claim сам bump'нул updated_at — повторный claim её уже не берёт.
+	// The claim itself bumped updated_at, so a repeated claim does not take it.
 	got = mustClaim(t, s, time.Minute)
 	if got[processing.ID] {
-		t.Error("claim не сдвинул updated_at: processing-джоба заклеймлена повторно")
+		t.Error("claim did not shift updated_at: processing job was claimed again")
 	}
 }
 
-// TestClaimJobsForWork_SummarizingBackoff — критический узел: summarizing ведёт
-// себя как processing (бэкофф), created по-прежнему клеймится без бэкоффа.
-// Регрессия: переход с `= $2` на `= ANY($2)` не должен сломать created-ветку.
+// TestClaimJobsForWork_SummarizingBackoff is a critical node: summarizing behaves
+// like processing (backoff), created is still claimed without backoff.
+// Regression: changing `= $2` to `= ANY($2)` must not break the created branch.
 func TestClaimJobsForWork_SummarizingBackoff(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
-	// Две активные Job у разных юзеров.
+	// Two active Jobs for different users.
 	createdUser := newTestUser(t, s)
 	sumUser := newTestUser(t, s)
 
-	// Джоба created — клеймится без бэкоффа.
+	// A created job is claimed without backoff.
 	created, err := s.CreateJob(ctx, createdUser, "https://meet.google.com/test-sum-a", "mock", 180)
 	if err != nil {
 		t.Fatalf("create job: %v", err)
 	}
 
-	// Джоба, переведённая в summarizing прямо сейчас (свежая).
+	// A job moved to summarizing right now (fresh).
 	sumJob, err := s.CreateJob(ctx, sumUser, "https://meet.google.com/test-sum-b", "mock", 180)
 	if err != nil {
 		t.Fatalf("create job: %v", err)
@@ -180,16 +180,16 @@ func TestClaimJobsForWork_SummarizingBackoff(t *testing.T) {
 		t.Fatalf("set summarizing: %v", err)
 	}
 
-	// Свежая summarizing не клеймится; created — клеймится.
+	// A fresh summarizing job is not claimed; created is.
 	got := mustClaim(t, s, time.Minute)
 	if !got[created.ID] {
-		t.Error("created-джоба не заклеймлена (регрессия ANY($2))")
+		t.Error("created job was not claimed (ANY($2) regression)")
 	}
 	if got[sumJob.ID] {
-		t.Error("summarizing-джоба заклеймлена до истечения pollInterval")
+		t.Error("summarizing job was claimed before pollInterval elapsed")
 	}
 
-	// Состариваем summarizing — теперь должна клеймиться.
+	// Age the summarizing job: now it must be claimed.
 	if _, err := s.pool.Exec(ctx,
 		`UPDATE jobs SET updated_at = now() - interval '2 minutes' WHERE id = $1`,
 		sumJob.ID); err != nil {
@@ -197,18 +197,18 @@ func TestClaimJobsForWork_SummarizingBackoff(t *testing.T) {
 	}
 	got = mustClaim(t, s, time.Minute)
 	if !got[sumJob.ID] {
-		t.Error("summarizing-джоба не заклеймлена после истечения pollInterval")
+		t.Error("summarizing job was not claimed after pollInterval elapsed")
 	}
 
-	// Claim сдвинул updated_at — повторный claim не берёт.
+	// The claim shifted updated_at, so a repeated claim does not take it.
 	got = mustClaim(t, s, time.Minute)
 	if got[sumJob.ID] {
-		t.Error("claim не сдвинул updated_at для summarizing: заклеймлена повторно")
+		t.Error("claim did not shift updated_at for summarizing: claimed again")
 	}
 }
 
-// TestClaimJobsForWork_FailedSummaryExcluded — failed_summary не возвращается
-// ClaimJobsForWork (исключён частичным индексом jobs_worker_idx).
+// TestClaimJobsForWork_FailedSummaryExcluded: failed_summary is not returned by
+// ClaimJobsForWork (excluded by the partial index jobs_worker_idx).
 func TestClaimJobsForWork_FailedSummaryExcluded(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -228,7 +228,7 @@ func TestClaimJobsForWork_FailedSummaryExcluded(t *testing.T) {
 		t.Fatalf("set failed_summary: %v", err)
 	}
 
-	// Даже состаренная failed_summary не должна клеймиться.
+	// Even an aged failed_summary must not be claimed.
 	if _, err := s.pool.Exec(ctx,
 		`UPDATE jobs SET updated_at = now() - interval '1 hour' WHERE id = $1`,
 		j.ID); err != nil {
@@ -236,17 +236,17 @@ func TestClaimJobsForWork_FailedSummaryExcluded(t *testing.T) {
 	}
 	got := mustClaim(t, s, time.Millisecond)
 	if got[j.ID] {
-		t.Error("failed_summary-джоба попала в claim: должна быть исключена")
+		t.Error("failed_summary job was claimed: it must be excluded")
 	}
 }
 
-// TestClaimJobsForWork_NoDoubleClaim — критический узел: FOR UPDATE SKIP LOCKED
-// не должен выдать один Job двум воркерам (docs/testing.md / db.md §5). Засеваем N
-// состаренных processing-джоб, запускаем K горутин, одновременно бьющих
-// ClaimJobsForWork маленьким limit'ом. Claim bump'ает updated_at в now(), а
-// pollInterval взят большим (1ч) — поэтому раз заклеймленная джоба выпадает из
-// окна бэкоффа и не может прийти повторно. Инвариант: ни один id не выдан дважды.
-// Гонять под -race.
+// TestClaimJobsForWork_NoDoubleClaim is a critical node: FOR UPDATE SKIP LOCKED
+// must not hand one Job to two workers (docs/testing.md / db.md §5). We seed N
+// aged processing jobs and start K goroutines that hit
+// ClaimJobsForWork simultaneously with a small limit. Claim bumps updated_at to now(), and
+// pollInterval is large (1h), so a job claimed once drops out of the
+// backoff window and cannot come back. Invariant: no id is handed out twice.
+// Run under -race.
 func TestClaimJobsForWork_NoDoubleClaim(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -254,11 +254,11 @@ func TestClaimJobsForWork_NoDoubleClaim(t *testing.T) {
 	const (
 		jobCount   = 20
 		goroutines = 8
-		limit      = 3 // < jobCount: ни одна горутина не выгребает всё разом, лок реально проверяется
+		limit      = 3 // < jobCount: no goroutine drains everything at once, so the lock is really exercised
 	)
 
-	// Каждая из jobCount активных processing-джоб создаётся под отдельным юзером,
-	// чтобы не расходовать общий trial одного пользователя.
+	// Each of the jobCount active processing jobs is created under a separate user,
+	// so as not to spend one user's shared trial.
 	seeded := make(map[int64]bool, jobCount)
 	ids := make([]int64, 0, jobCount)
 	for i := 0; i < jobCount; i++ {
@@ -273,7 +273,7 @@ func TestClaimJobsForWork_NoDoubleClaim(t *testing.T) {
 		seeded[j.ID] = true
 		ids = append(ids, j.ID)
 	}
-	// Состариваем наши processing-джобы по их id, чтобы они проходили бэкофф-фильтр.
+	// Age our processing jobs by id so that they pass the backoff filter.
 	if _, err := s.pool.Exec(ctx,
 		`UPDATE jobs SET updated_at = now() - interval '1 hour' WHERE id = ANY($1)`,
 		ids); err != nil {
@@ -282,7 +282,7 @@ func TestClaimJobsForWork_NoDoubleClaim(t *testing.T) {
 
 	var (
 		mu     sync.Mutex
-		counts = make(map[int64]int) // id -> сколько раз заклеймлен (только наши)
+		counts = make(map[int64]int) // id -> how many times claimed (ours only)
 		start  = make(chan struct{})
 		wg     sync.WaitGroup
 	)
@@ -290,9 +290,9 @@ func TestClaimJobsForWork_NoDoubleClaim(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			<-start // синхронный старт: повышаем шанс реального наложения транзакций
-			// Каждая горутина крутит claim, пока есть что брать. pollInterval=1ч:
-			// единожды заклеймленная (updated_at -> now()) джоба больше не вернётся.
+			<-start // synchronous start: raises the chance of real transaction overlap
+			// Each goroutine loops claim while there is something to take. pollInterval=1h:
+			// a job claimed once (updated_at -> now()) never comes back.
 			for {
 				jobs, err := s.ClaimJobsForWork(ctx, time.Hour, limit)
 				if err != nil {
@@ -308,8 +308,8 @@ func TestClaimJobsForWork_NoDoubleClaim(t *testing.T) {
 					}
 				}
 				mu.Unlock()
-				// Чужие dev-джобы возможны (claim лишь bump'ает их), но наши
-				// кончились — выходим, чтобы не крутить вечный цикл на чужих.
+				// Foreign dev jobs are possible (claim only bumps them), but ours
+				// are exhausted: exit so as not to spin forever on foreign ones.
 				if mine == 0 {
 					return
 				}
@@ -323,17 +323,17 @@ func TestClaimJobsForWork_NoDoubleClaim(t *testing.T) {
 	for id, n := range counts {
 		if n > 1 {
 			doubled++
-			t.Errorf("job %d заклеймлен %d раз — двойной захват под SKIP LOCKED", id, n)
+			t.Errorf("job %d claimed %d times: double claim under SKIP LOCKED", id, n)
 		}
 	}
-	// Санити: все засеянные джобы должны быть выбраны ровно по разу
-	// (иначе тест зелёный по тривиальной причине «никто ничего не взял»).
+	// Sanity: every seeded job must be picked exactly once
+	// (otherwise the test is green for the trivial reason "nobody took anything").
 	if len(counts) != jobCount && doubled == 0 {
-		t.Errorf("заклеймлено уникальных наших джоб %d, ожидали %d", len(counts), jobCount)
+		t.Errorf("claimed %d unique own jobs, expected %d", len(counts), jobCount)
 	}
 }
 
-// TestSetJobSummarizing — переход processing -> summarizing сохраняет raw.
+// TestSetJobSummarizing: the processing -> summarizing transition keeps raw.
 func TestSetJobSummarizing(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -360,7 +360,7 @@ func TestSetJobSummarizing(t *testing.T) {
 	}
 }
 
-// TestSetJobFailedSummary — переход summarizing -> failed_summary пишет last_error.
+// TestSetJobFailedSummary: the summarizing -> failed_summary transition writes last_error.
 func TestSetJobFailedSummary(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage(t)
@@ -381,7 +381,7 @@ func TestSetJobFailedSummary(t *testing.T) {
 		t.Fatalf("SetJobFailedSummary: %v", err)
 	}
 
-	// jobRow не читает last_error — проверяем напрямую.
+	// jobRow does not read last_error, so we check it directly.
 	var status, lastErr string
 	err = s.pool.QueryRow(ctx,
 		`SELECT status, last_error FROM jobs WHERE id = $1`, j.ID,

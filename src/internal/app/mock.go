@@ -6,41 +6,41 @@ import (
 	"fmt"
 )
 
-// Контракт закреплён до проводки в S5: тесты зовут методы напрямую,
-// и без ассерта дрейф сигнатуры компилятор не поймал бы.
+// The contract is pinned before wiring in S5: tests call the methods directly,
+// and without an assertion the compiler would not catch signature drift.
 var _ TranscriptionProvider = (*MockProvider)(nil)
 
-// MockProvider реализует TranscriptionProvider для локального E2E без внешнего API.
-// Используется из одной горутины оркестратора — синхронизация не нужна.
+// MockProvider implements TranscriptionProvider for local E2E without an external API.
+// Used from a single orchestrator goroutine, so no synchronization is needed.
 type MockProvider struct {
-	// DoneAfterPolls — сколько вызовов Poll вернут StatusPending до StatusDone.
-	// 0 (zero value) — StatusDone сразу на первом вызове.
+	// DoneAfterPolls is how many Poll calls return StatusPending before StatusDone.
+	// 0 (zero value) means StatusDone on the first call.
 	DoneAfterPolls int
 
-	// FailOnPoll — если true, Poll возвращает StatusFailed (режим отказа для S5 E2E).
-	// Нулевое значение даёт happy path.
+	// FailOnPoll: if true, Poll returns StatusFailed (failure mode for S5 E2E).
+	// The zero value gives the happy path.
 	FailOnPoll bool
 
-	// Phased — если true, Poll проводит джобу по фазам OnCall -> Transcribing -> Done
-	// (по одному вызову на фазу), чтобы тест orchestrator прогнал полный путь
-	// joining -> recording -> processing -> done. Нулевое значение (false) сохраняет
-	// исходное поведение Pending*DoneAfterPolls -> Done — существующие тесты не ломаются.
+	// Phased: if true, Poll walks the job through the phases OnCall -> Transcribing -> Done
+	// (one call per phase), so the orchestrator test runs the full path
+	// joining -> recording -> processing -> done. The zero value (false) keeps the
+	// original Pending*DoneAfterPolls -> Done behavior, so existing tests do not break.
 	Phased bool
 
-	pollCount map[string]int // счётчик вызовов Poll по externalJobID
+	pollCount map[string]int // Poll call counter per externalJobID
 
-	// Cancelled записывает externalJobID, для которых вызван Cancel (проверка orphan-timeout).
+	// Cancelled records the externalJobIDs for which Cancel was called (orphan-timeout check).
 	Cancelled []string
 }
 
-// Submit возвращает детерминированный фейковый id без внешнего вызова.
+// Submit returns a deterministic fake id without an external call.
 func (m *MockProvider) Submit(_ context.Context, job Job) (string, error) {
 	return fmt.Sprintf("mock-job-%d", job.ID), nil
 }
 
-// Poll возвращает StatusFailed если FailOnPoll. В режиме Phased ведёт джобу по фазам
-// OnCall -> Transcribing -> Done (по одному вызову на фазу). Иначе — StatusPending первые
-// DoneAfterPolls вызовов, затем StatusDone.
+// Poll returns StatusFailed if FailOnPoll. In Phased mode it walks the job through the phases
+// OnCall -> Transcribing -> Done (one call per phase). Otherwise StatusPending for the first
+// DoneAfterPolls calls, then StatusDone.
 func (m *MockProvider) Poll(_ context.Context, externalJobID string) (ProviderStatus, error) {
 	if m.FailOnPoll {
 		return StatusFailed, nil
@@ -65,8 +65,8 @@ func (m *MockProvider) Poll(_ context.Context, externalJobID string) (ProviderSt
 	return StatusDone, nil
 }
 
-// Fetch возвращает заготовленный транскрипт и валидный JSON в Raw.
-// Вызывается при StatusDone и при stop-marker после provider failure/cancel.
+// Fetch returns a canned transcript and valid JSON in Raw.
+// Called on StatusDone and on a stop marker after provider failure/cancel.
 func (m *MockProvider) Fetch(_ context.Context, externalJobID string) (Result, error) {
 	transcript := "# Транскрипт встречи\n\n" +
 		"**заказчик:** Так, погнали. Первое — оплата. Дима, что по ЮKassa?\n\n" +
@@ -83,8 +83,8 @@ func (m *MockProvider) Fetch(_ context.Context, externalJobID string) (Result, e
 		"**Маша:** Напишу сегодня.\n\n" +
 		"**заказчик:** Всё, по коням.\n"
 
-	// Raw обязан быть валидным JSON — колонка JSONB не примет plain text.
-	// json.Marshal вместо ручного литерала: валидность не зависит от содержимого id.
+	// Raw must be valid JSON: a JSONB column does not accept plain text.
+	// json.Marshal instead of a hand-written literal: validity does not depend on the id content.
 	raw, err := json.Marshal(map[string]any{
 		"job_id":   externalJobID,
 		"status":   "done",
@@ -100,7 +100,7 @@ func (m *MockProvider) Fetch(_ context.Context, externalJobID string) (Result, e
 	}, nil
 }
 
-// Cancel — no-op для mock (внешнего бота нет), но записывает вызов для проверок.
+// Cancel is a no-op for the mock (there is no external bot), but records the call for assertions.
 func (m *MockProvider) Cancel(_ context.Context, externalJobID string) error {
 	m.Cancelled = append(m.Cancelled, externalJobID)
 	return nil

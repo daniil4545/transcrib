@@ -7,11 +7,11 @@ import (
 	"strings"
 )
 
-// Summarizer изолирует orchestrator от провайдера саммари (F3). Реализации:
-// MockSummarizer и OpenRouterSummarizer; активная выбирается через SUMMARIZER_PROVIDER.
+// Summarizer isolates the orchestrator from the summary provider (F3). Implementations:
+// MockSummarizer and OpenRouterSummarizer; the active one is chosen via SUMMARIZER_PROVIDER.
 type Summarizer interface {
-	// Summarize превращает готовый markdown-транскрипт в markdown-конспект (F3:
-	// ключевые темы, решения, задачи с ответственными). Вызывается на шаге summarizing.
+	// Summarize turns a finished markdown transcript into a markdown summary (F3:
+	// key topics, decisions, tasks with owners). Called at the summarizing step.
 	Summarize(ctx context.Context, transcript string) (markdown string, err error)
 }
 
@@ -20,20 +20,20 @@ var defaultSummaryPrompt string
 
 var _ Summarizer = (*MockSummarizer)(nil)
 
-// MockSummarizer — конспект без сети, для локального E2E без ключа.
+// MockSummarizer is a network-free summary for local E2E without a key.
 type MockSummarizer struct {
 	prompt string
 
-	// FailOnSummarize — если true, Summarize возвращает ошибку (режим отказа для E2E).
-	// Нулевое значение даёт happy path.
+	// FailOnSummarize: if true, Summarize returns an error (failure mode for E2E).
+	// The zero value gives the happy path.
 	FailOnSummarize bool
 }
 
-// NewMockSummarizer инкапсулирует чтение встроенного промпта — main.go про embed не знает.
+// NewMockSummarizer encapsulates reading the embedded prompt, so main.go knows nothing about embed.
 func NewMockSummarizer() *MockSummarizer { return &MockSummarizer{prompt: defaultSummaryPrompt} }
 
-// Summarize возвращает фиксированный конспект; первая строка промпта попадает в вывод,
-// чтобы E2E подтверждал: замена summary_prompt.txt меняет результат.
+// Summarize returns a fixed summary; the first line of the prompt goes into the output
+// so that E2E confirms that replacing summary_prompt.txt changes the result.
 func (m *MockSummarizer) Summarize(_ context.Context, _ string) (string, error) {
 	if m.FailOnSummarize {
 		return "", errors.New("mock summarizer forced failure")

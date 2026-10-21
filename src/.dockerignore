@@ -1,4 +1,4 @@
-# migrations/ намеренно НЕ исключены — нужны в образе для goose
+# migrations/ is intentionally NOT excluded: goose needs it in the image
 .git
 .env
 .env.*
