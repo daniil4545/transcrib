@@ -4,6 +4,8 @@ Coverage canon. Maintained by the `tester` agent. Project principle: **targeted 
 
 Test stack: stdlib `testing`, table-driven + `t.Run`. Integration tests of critical nodes hit a real Postgres via `DATABASE_URL`; without it they `t.Skip` (a bare `go test` works without infrastructure). External services are `MockProvider` and recording fakes. Local DB-backed run: `docker compose up -d`, then `NO_DOTENV=1 DATABASE_URL=... make ci-check` from `src/`; without `DATABASE_URL` the integration tests are skipped. The CI workflow and the Deploy workflow start PostgreSQL 16, set `DATABASE_URL`, run `make migrate-up`, then `go test ./...`; the Deploy workflow does not build the image if the DB-backed gate failed.
 
+`src/internal/app/dialog_test.go` (`TestDialog_MockHappyPath`) runs one job through the whole state machine on the mock provider and prints the chat; the README demo block is its output (`go test ./internal/app -run TestDialog -v`).
+
 ## Check types and change gate
 
 | Type | Meaning | Who changes it | Change gate |
