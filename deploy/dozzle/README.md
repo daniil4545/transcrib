@@ -47,7 +47,7 @@ iptables -C INPUT ! -i lo -p tcp --dport 48080 -j DROP 2>/dev/null || \
 
 Check: bring up the SSH tunnel, open `http://127.0.0.1:48080` -> login form -> `admin` + password ->
 the legacy prod/test containers `transcrib-*`/`transcrib-dev-*` are visible, if they are running. The
-Vexa/svyazka containers must be absent (filter by container name `name=transcrib`).
+Containers of other services must be absent (filter by container name `name=transcrib`).
 
 After the Coolify cutover the containers got names like `app-<resource_uuid>` and do not match
 `DOZZLE_FILTER=name=transcrib`. For Coolify prod/dev use the Coolify UI or:
