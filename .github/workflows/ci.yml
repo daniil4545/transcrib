@@ -1,12 +1,11 @@
 name: CI
 
-# The dev branch is not listened to here: the same checks run in the checks job of deploy.yml,
-# otherwise every push to dev would start two identical runs with two Postgres instances.
-#
-# Auto triggers were removed on 2026-08-28: GitHub Actions is not used, the checks run
-# locally (make ci-check). Restore pull_request and push together with a self-hosted
-# runner.
+# Format, vet, lint, build and the full test suite on PostgreSQL 16. The integration
+# tests skip without DATABASE_URL, so the job starts a database and applies the migrations.
 on:
+  push:
+    branches: [main, dev]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -19,8 +18,7 @@ concurrency:
 jobs:
   go:
     name: Go checks
-    # CI_RUNNER switches the job to a self-hosted runner without a commit.
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
       postgres:
@@ -29,7 +27,6 @@ jobs:
           POSTGRES_DB: transcrib
           POSTGRES_USER: transcrib
           POSTGRES_PASSWORD: transcrib
-        # Random host port: on self-hosted two runners would otherwise fight over 5432.
         ports:
           - 5432/tcp
         options: >-
@@ -37,24 +34,40 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-          --cpus 1
-          --memory 512m
     defaults:
       run:
         working-directory: src
     steps:
-      # actions/checkout v5.0.0
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
-      # actions/setup-go v6.0.0
-      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
-      # The job context is unavailable in jobs.<id>.env, so the port is resolved here.
+      # The job context is unavailable in jobs.<id>.env, so the mapped port is resolved here.
       - name: Export DATABASE_URL
         run: echo "DATABASE_URL=postgres://transcrib:transcrib@localhost:${{ job.services.postgres.ports[5432] }}/transcrib?sslmode=disable" >> "$GITHUB_ENV"
 
-      - name: Check
-        run: make ci-check
+      - name: Format
+        run: make fmt-check
+
+      - name: Vet
+        run: make vet
+
+      - uses: golangci/golangci-lint-action@0a35821d5c230e903fcfe077583637dea1b27b47 # v9.0.0
+        with:
+          version: v2.15.0
+          working-directory: src
+
+      - name: Build
+        run: make build
+
+      - name: Compose check
+        run: make deploy-check
+
+      - name: Migrate
+        run: make migrate-up
+
+      - name: Test
+        run: make test
