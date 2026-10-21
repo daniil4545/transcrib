@@ -224,7 +224,7 @@ func TestClaimJobsForWork_FailedSummaryExcluded(t *testing.T) {
 	if err := s.SetJobSummarizing(ctx, j.ID, []byte(`{"status":"done"}`), 3600); err != nil {
 		t.Fatalf("set summarizing: %v", err)
 	}
-	if err := s.SetJobFailedSummary(ctx, j.ID, "claude timeout", 180); err != nil {
+	if err := s.SetJobFailedSummary(ctx, j.ID, "summarizer timeout", 180); err != nil {
 		t.Fatalf("set failed_summary: %v", err)
 	}
 

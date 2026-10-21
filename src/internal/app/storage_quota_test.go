@@ -590,7 +590,7 @@ func TestSetJobFailedSummary_NoRefund(t *testing.T) {
 		if err := s.SetJobSummarizing(ctx, job.ID, []byte(`{"transcript":"x"}`), 3600); err != nil {
 			t.Fatalf("SetJobSummarizing: %v", err)
 		}
-		if err := s.SetJobFailedSummary(ctx, job.ID, "claude timeout", 180); err != nil {
+		if err := s.SetJobFailedSummary(ctx, job.ID, "summarizer timeout", 180); err != nil {
 			t.Fatalf("SetJobFailedSummary: %v", err)
 		}
 		if got := trialUsed(t, s, userID); got != 1 {
@@ -612,7 +612,7 @@ func TestSetJobFailedSummary_NoRefund(t *testing.T) {
 		if err := s.SetJobSummarizing(ctx, job.ID, []byte(`{"transcript":"x"}`), 3600); err != nil {
 			t.Fatalf("SetJobSummarizing: %v", err)
 		}
-		if err := s.SetJobFailedSummary(ctx, job.ID, "claude timeout", 180); err != nil {
+		if err := s.SetJobFailedSummary(ctx, job.ID, "summarizer timeout", 180); err != nil {
 			t.Fatalf("SetJobFailedSummary: %v", err)
 		}
 		if got := subBalance(t, s, subID); got != 4 {
